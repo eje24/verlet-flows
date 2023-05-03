@@ -16,12 +16,12 @@ from datasets.process_mols import lig_feature_dims, rec_residue_feature_dims
 
 class AtomEncoder(torch.nn.Module):
 
-    def __init__(self, emb_dim, feature_dims, sigma_embed_dim, lm_embedding_type=None):
+    def __init__(self, emb_dim, feature_dims, lm_embedding_type=None):
         # first element of feature_dims tuple is a list with the lenght of each categorical feature and the second is the number of scalar features
         super(AtomEncoder, self).__init__()
         self.atom_embedding_list = torch.nn.ModuleList()
         self.num_categorical_features = len(feature_dims[0])
-        self.num_scalar_features = feature_dims[1] + sigma_embed_dim
+        self.num_scalar_features = feature_dims[1]
         self.lm_embedding_type = lm_embedding_type
         for i, dim in enumerate(feature_dims[0]):
             emb = torch.nn.Embedding(dim, emb_dim)
@@ -99,16 +99,14 @@ class TensorProductConvLayer(torch.nn.Module):
 
 
 class TensorProductScoreModel(torch.nn.Module):
-    def __init__(self, t_to_sigma, device, timestep_emb_func, in_lig_edge_features=4, sigma_embed_dim=32, sh_lmax=2,
+    def __init__(self, device, in_lig_edge_features=4, sh_lmax=2,
                  ns=16, nv=4, num_conv_layers=2, lig_max_radius=5, rec_max_radius=30, cross_max_distance=250,
-                 center_max_distance=30, distance_embed_dim=32, cross_distance_embed_dim=32, no_torsion=False,
-                 scale_by_sigma=True, use_second_order_repr=False, batch_norm=True,
+                 center_max_distance=30, distance_embed_dim=32, cross_distance_embed_dim=32,
+                 use_second_order_repr=False, batch_norm=True,
                  dynamic_max_cross=False, dropout=0.0, lm_embedding_type=None, confidence_mode=False,
                  confidence_dropout=0, confidence_no_batchnorm=False, num_confidence_outputs=1):
         super(TensorProductScoreModel, self).__init__()
-        self.t_to_sigma = t_to_sigma
         self.in_lig_edge_features = in_lig_edge_features
-        self.sigma_embed_dim = sigma_embed_dim
         self.lig_max_radius = lig_max_radius
         self.rec_max_radius = rec_max_radius
         self.cross_max_distance = cross_max_distance
@@ -118,25 +116,22 @@ class TensorProductScoreModel(torch.nn.Module):
         self.cross_distance_embed_dim = cross_distance_embed_dim
         self.sh_irreps = o3.Irreps.spherical_harmonics(lmax=sh_lmax)
         self.ns, self.nv = ns, nv
-        self.scale_by_sigma = scale_by_sigma
         self.device = device
-        self.no_torsion = no_torsion
-        self.timestep_emb_func = timestep_emb_func
         self.confidence_mode = confidence_mode
         self.num_conv_layers = num_conv_layers
 
         self.lig_node_embedding = AtomEncoder(
-            emb_dim=ns, feature_dims=lig_feature_dims, sigma_embed_dim=sigma_embed_dim)
+            emb_dim=ns, feature_dims=lig_feature_dims)
         self.lig_edge_embedding = nn.Sequential(nn.Linear(
-            in_lig_edge_features + sigma_embed_dim + distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
+            in_lig_edge_features + distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
 
         self.rec_node_embedding = AtomEncoder(
-            emb_dim=ns, feature_dims=rec_residue_feature_dims, sigma_embed_dim=sigma_embed_dim, lm_embedding_type=lm_embedding_type)
+            emb_dim=ns, feature_dims=rec_residue_feature_dims, lm_embedding_type=lm_embedding_type)
         self.rec_edge_embedding = nn.Sequential(nn.Linear(
-            sigma_embed_dim + distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
+            distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
 
         self.cross_edge_embedding = nn.Sequential(nn.Linear(
-            sigma_embed_dim + cross_distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
+            cross_distance_embed_dim, ns), nn.ReLU(), nn.Dropout(dropout), nn.Linear(ns, ns))
 
         self.lig_distance_expansion = GaussianSmearing(
             0.0, lig_max_radius, distance_embed_dim)
@@ -208,7 +203,7 @@ class TensorProductScoreModel(torch.nn.Module):
             self.center_distance_expansion = GaussianSmearing(
                 0.0, center_max_distance, distance_embed_dim)
             self.center_edge_embedding = nn.Sequential(
-                nn.Linear(distance_embed_dim + sigma_embed_dim, ns),
+                nn.Linear(distance_embed_dim, ns),
                 nn.ReLU(),
                 nn.Dropout(dropout),
                 nn.Linear(ns, ns)
@@ -223,10 +218,6 @@ class TensorProductScoreModel(torch.nn.Module):
                 dropout=dropout,
                 batch_norm=batch_norm
             )
-            self.tr_final_layer = nn.Sequential(nn.Linear(
-                1 + sigma_embed_dim, ns), nn.Dropout(dropout), nn.ReLU(), nn.Linear(ns, 1))
-            self.rot_final_layer = nn.Sequential(nn.Linear(
-                1 + sigma_embed_dim, ns), nn.Dropout(dropout), nn.ReLU(), nn.Linear(ns, 1))
 
             if not no_torsion:
                 # torsion angles components
@@ -351,41 +342,7 @@ class TensorProductScoreModel(torch.nn.Module):
         rot_pred = rot_pred / rot_norm * \
             self.rot_final_layer(
                 torch.cat([rot_norm, data.graph_sigma_emb], dim=1))
-
-        if self.scale_by_sigma:
-            tr_pred = tr_pred / tr_sigma.unsqueeze(1)
-            rot_pred = rot_pred * \
-                so3.score_norm(rot_sigma.cpu()).unsqueeze(
-                    1).to(data['ligand'].x.device)
-
-        if self.no_torsion or data['ligand'].edge_mask.sum() == 0:
-            return tr_pred, rot_pred, torch.empty(0, device=self.device)
-
-        # torsional components
-        tor_bonds, tor_edge_index, tor_edge_attr, tor_edge_sh = self.build_bond_conv_graph(
-            data)
-        tor_bond_vec = data['ligand'].pos[tor_bonds[1]] - \
-            data['ligand'].pos[tor_bonds[0]]
-        tor_bond_attr = lig_node_attr[tor_bonds[0]
-                                      ] + lig_node_attr[tor_bonds[1]]
-
-        tor_bonds_sh = o3.spherical_harmonics(
-            "2e", tor_bond_vec, normalize=True, normalization='component')
-        tor_edge_sh = self.final_tp_tor(
-            tor_edge_sh, tor_bonds_sh[tor_edge_index[0]])
-
-        tor_edge_attr = torch.cat([tor_edge_attr, lig_node_attr[tor_edge_index[1], :self.ns],
-                                   tor_bond_attr[tor_edge_index[0], :self.ns]], -1)
-        tor_pred = self.tor_bond_conv(lig_node_attr, tor_edge_index, tor_edge_attr, tor_edge_sh,
-                                      out_nodes=data['ligand'].edge_mask.sum(), reduce='mean')
-        tor_pred = self.tor_final_layer(tor_pred).squeeze(1)
-        edge_sigma = tor_sigma[data['ligand'].batch][data['ligand',
-                                                          'ligand'].edge_index[0]][data['ligand'].edge_mask]
-
-        if self.scale_by_sigma:
-            tor_pred = tor_pred * torch.sqrt(torch.tensor(torus.score_norm(edge_sigma.cpu().numpy())).float()
-                                             .to(data['ligand'].x.device))
-        return tr_pred, rot_pred, tor_pred
+        return tr_pred, rot_pred
 
     def build_lig_conv_graph(self, data):
         # builds the ligand graph edges and initial node and edge features

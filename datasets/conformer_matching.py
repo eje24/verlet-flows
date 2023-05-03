@@ -1,4 +1,6 @@
-import copy, time
+# Based on https://github.com/gcorso/DiffDock/blob/main/datasets/conformer_matching.py
+import copy
+import time
 import numpy as np
 from collections import defaultdict
 from rdkit import Chem, RDLogger
@@ -13,23 +15,27 @@ RDLogger.DisableLog('rdApp.*')
     Conformer matching routines from Torsional Diffusion
 """
 
+
 def GetDihedral(conf, atom_idx):
     return rdMolTransforms.GetDihedralRad(conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3])
 
 
 def SetDihedral(conf, atom_idx, new_vale):
-    rdMolTransforms.SetDihedralRad(conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3], new_vale)
+    rdMolTransforms.SetDihedralRad(
+        conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3], new_vale)
 
 
 def apply_changes(mol, values, rotable_bonds, conf_id):
     opt_mol = copy.copy(mol)
-    [SetDihedral(opt_mol.GetConformer(conf_id), rotable_bonds[r], values[r]) for r in range(len(rotable_bonds))]
+    [SetDihedral(opt_mol.GetConformer(conf_id), rotable_bonds[r], values[r])
+     for r in range(len(rotable_bonds))]
     return opt_mol
 
 
 def optimize_rotatable_bonds(mol, true_mol, rotable_bonds, probe_id=-1, ref_id=-1, seed=0, popsize=15, maxiter=500,
                              mutation=(0.5, 1), recombination=0.8):
-    opt = OptimizeConformer(mol, true_mol, rotable_bonds, seed=seed, probe_id=probe_id, ref_id=ref_id)
+    opt = OptimizeConformer(mol, true_mol, rotable_bonds,
+                            seed=seed, probe_id=probe_id, ref_id=ref_id)
     max_bound = [np.pi] * len(opt.rotable_bonds)
     min_bound = [-np.pi] * len(opt.rotable_bonds)
     bounds = (min_bound, max_bound)
@@ -39,7 +45,8 @@ def optimize_rotatable_bonds(mol, true_mol, rotable_bonds, probe_id=-1, ref_id=-
     result = differential_evolution(opt.score_conformation, bounds,
                                     maxiter=maxiter, popsize=popsize,
                                     mutation=mutation, recombination=recombination, disp=False, seed=seed)
-    opt_mol = apply_changes(opt.mol, result['x'], opt.rotable_bonds, conf_id=probe_id)
+    opt_mol = apply_changes(
+        opt.mol, result['x'], opt.rotable_bonds, conf_id=probe_id)
 
     return opt_mol
 
@@ -73,9 +80,11 @@ def get_torsion_angles(mol):
     for e in G.edges():
         G2 = copy.deepcopy(G)
         G2.remove_edge(*e)
-        if nx.is_connected(G2): continue
+        if nx.is_connected(G2):
+            continue
         l = list(sorted(nx.connected_components(G2), key=len)[0])
-        if len(l) < 2: continue
+        if len(l) < 2:
+            continue
         n0 = list(G2.neighbors(e[0]))
         n1 = list(G2.neighbors(e[1]))
         torsions_list.append(
@@ -137,7 +146,8 @@ def GetDihedralFromPointCloud(Z, atom_idx):
     p = Z[list(atom_idx)]
     b = p[:-1] - p[1:]
     b[0] *= -1
-    v = np.array([v - (v.dot(b[1]) / b[1].dot(b[1])) * b[1] for v in [b[0], b[2]]])
+    v = np.array([v - (v.dot(b[1]) / b[1].dot(b[1])) * b[1]
+                  for v in [b[0], b[2]]])
     # Normalize vectors
     v /= np.sqrt(np.einsum('...i,...i', v, v)).reshape(-1, 1)
     b1 = b[1] / np.linalg.norm(b[1])
@@ -166,7 +176,8 @@ def get_dihedral_vonMises(mol, conf, atom_idx, Z):
                 continue
             assert k != l
             s_star = S_vec(GetDihedralFromPointCloud(Z, (k, i, j, l)))
-            a_mat = A_transpose_matrix(GetDihedral(conf, (k, i, j, k_0)) + GetDihedral(conf, (l_0, i, j, l)))
+            a_mat = A_transpose_matrix(GetDihedral(
+                conf, (k, i, j, k_0)) + GetDihedral(conf, (l_0, i, j, l)))
             v = v + np.matmul(a_mat, s_star)
     v = v / np.linalg.norm(v)
     v = v.reshape(-1)
@@ -177,7 +188,8 @@ def get_von_mises_rms(mol, mol_rdkit, rotable_bonds, conf_id):
     new_dihedrals = np.zeros(len(rotable_bonds))
     for idx, r in enumerate(rotable_bonds):
         new_dihedrals[idx] = get_dihedral_vonMises(mol_rdkit,
-                                                   mol_rdkit.GetConformer(conf_id), r,
+                                                   mol_rdkit.GetConformer(
+                                                       conf_id), r,
                                                    mol.GetConformer().GetPositions())
     mol_rdkit = apply_changes(mol_rdkit, new_dihedrals, rotable_bonds, conf_id)
     return RMSD(mol_rdkit, mol, conf_id)
