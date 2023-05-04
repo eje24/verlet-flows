@@ -1,2 +1,1 @@
-# manifold_augmented_nf
-Manifold Augmented Normalizing Flows
+# Augmented Normalizing Flows on Homogenous Spaces
