@@ -83,10 +83,7 @@ def axis_angle_to_matrix(axis_angle):
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
 
-def apply_update(data, update):
-    rot_update = update[:,:3]
-    tr_update =update[:,:3]
-    lig_center = torch.mean(data['ligand'].pos, dim=0, keepdim=True)
+def apply_update(x, rot_update, tr_update):
+    lig_center = torch.mean(x['ligand'].pos, dim=0, keepdim=True)
     rot_mat = axis_angle_to_matrix(rot_update.squeeze())
-    return (data['ligand'].pos - lig_center) @ rot_mat.T + lig_center + tr_update
-
+    return (x['ligand'].pos - lig_center) @ rot_mat.T + lig_center + tr_update

@@ -1,5 +1,5 @@
 import torch.nn as nn
-from coupling_layer import CouplingLayer
+from coupling_layer import SE3CouplingLayer
 
 
 class HomogenousAugmentedNF(nn.Module):
@@ -7,11 +7,11 @@ class HomogenousAugmentedNF(nn.Module):
         self.device = device
         self.num_layers = num_layers
         self.coupling_layers = nn.ModuleList(
-            [CouplingLayer(device) for _ in range(num_layers)])
+            [SE3CouplingLayer(device) for _ in range(num_layers)])
 
-    def forward(self, x, v, reverse=False):
+    def forward(self, x, v_rot, v_tr, reverse=False):
         delta_pxv = 0
         for coupling_layer in self.coupling_layers:
-            x, v, _delta_pxv = coupling_layer(x, v, reverse)
+            data, _delta_pxv = coupling_layer(x, v_rot, v_tr, reverse)
             delta_pxv += _delta_pxv
-        return x, v, delta_pxv
+        return data, delta_pxv
