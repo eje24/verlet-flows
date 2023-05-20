@@ -19,46 +19,15 @@ from tqdm import tqdm
 
 from datasets.process_mols import read_molecule, get_rec_graph, generate_conformer, \
     get_lig_graph_with_matching, extract_receptor_structure, parse_receptor, parse_pdb_from_path
-from utils.diffusion_utils import modify_conformer, set_time
-from utils.geometry_utils import read_strings_from_txt
-from utils import so3, torus
+from utils.utils import read_strings_from_txt
 
 
-class NoiseTransform(BaseTransform):
-    def __init__(self, t_to_sigma, no_torsion, all_atom):
-        self.t_to_sigma = t_to_sigma
-        self.no_torsion = no_torsion
-        self.all_atom = all_atom
-
+class InitializeVelocity(BaseTransform):
     def __call__(self, data):
-        t = np.random.uniform()
-        t_tr, t_rot, t_tor = t, t, t
-        return self.apply_noise(data, t_tr, t_rot, t_tor)
-
-    def apply_noise(self, data, t_tr, t_rot, t_tor, tr_update=None, rot_update=None, torsion_updates=None):
         if not torch.is_tensor(data['ligand'].pos):
             data['ligand'].pos = random.choice(data['ligand'].pos)
-
-        tr_sigma, rot_sigma, tor_sigma = self.t_to_sigma(t_tr, t_rot, t_tor)
-        set_time(data, t_tr, t_rot, t_tor, 1, self.all_atom, device=None)
-
-        tr_update = torch.normal(mean=0, std=tr_sigma, size=(
-            1, 3)) if tr_update is None else tr_update
-        rot_update = so3.sample_vec(
-            eps=rot_sigma) if rot_update is None else rot_update
-        torsion_updates = np.random.normal(loc=0.0, scale=tor_sigma, size=data['ligand'].edge_mask.sum(
-        )) if torsion_updates is None else torsion_updates
-        torsion_updates = None if self.no_torsion else torsion_updates
-        modify_conformer(data, tr_update, torch.from_numpy(
-            rot_update).float(), torsion_updates)
-
-        data.tr_score = -tr_update / tr_sigma ** 2
-        data.rot_score = torch.from_numpy(so3.score_vec(
-            vec=rot_update, eps=rot_sigma)).float().unsqueeze(0)
-        data.tor_score = None if self.no_torsion else torch.from_numpy(
-            torus.score(torsion_updates, tor_sigma)).float()
-        data.tor_sigma_edge = None if self.no_torsion else np.ones(
-            data['ligand'].edge_mask.sum()) * tor_sigma
+        data.v_rot = torch.rand(1, 3)
+        data.v_tr = torch.rand(1, 3)
         return data
 
 
@@ -132,6 +101,11 @@ class PDBBind(Dataset):
             return copy.deepcopy(self.complex_graphs[idx])
 
     def preprocessing(self):
+        """
+        Constructs and caches if necessary, and loads into memory
+        self.complex_graphs (Heterographs) and
+        self.rdkit_ligands (RDKit predicted structures)
+        """
         print(
             f'Processing complexes from [{self.split_path}] and saving it to [{self.full_cache_path}]')
 
@@ -413,9 +387,8 @@ def print_statistics(complex_graphs):
             f"{name[i]}: mean {np.mean(array)}, std {np.std(array)}, max {np.max(array)}")
 
 
-def construct_loader(args, t_to_sigma):
-    transform = NoiseTransform(t_to_sigma=t_to_sigma, no_torsion=args.no_torsion,
-                               all_atom=args.all_atoms)
+def construct_loader(args):
+    transform = InitializeVelocity()
 
     common_args = {'transform': transform, 'root': args.data_dir, 'limit_complexes': args.limit_complexes,
                    'receptor_radius': args.receptor_radius,

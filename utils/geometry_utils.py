@@ -92,6 +92,5 @@ def apply_update(x: HeteroGraph, rot_update: torch.Tensor, tr_update: torch.Tens
     @returns x, updated
     """
     lig_center = torch.mean(x['ligand'].pos, dim=0, keepdim=True)
-    x['ligand'].pos = (x['ligand'].pos -
-                       lig_center) @ rot_update.T + lig_center + tr_update
+    x['ligand'].pos = (x['ligand'].pos - lig_center) @ rot_update.T + lig_center + tr_update
     return x
