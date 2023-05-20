@@ -1,4 +1,5 @@
 import torch
+from torch_geometric.data import HeteroGraph
 
 
 def quaternion_to_matrix(quaternions):
@@ -66,7 +67,7 @@ def axis_angle_to_quaternion(axis_angle):
     return quaternions
 
 
-def axis_angle_to_matrix(axis_angle):
+def axis_angle_to_matrix(axis_angle) -> torch.Tensor:
     """
     From https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/transforms/rotation_conversions.html
     Convert rotations given as axis/angle to rotation matrices.
@@ -83,7 +84,14 @@ def axis_angle_to_matrix(axis_angle):
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
 
-def apply_update(x, rot_update, tr_update):
+def apply_update(x: HeteroGraph, rot_update: torch.Tensor, tr_update: torch.Tensor) -> HeteroGraph:
+    """
+    @param update
+    @param rot_update, 3 x 3
+    @param tr_update, 3
+    @returns x, updated
+    """
     lig_center = torch.mean(x['ligand'].pos, dim=0, keepdim=True)
-    rot_mat = axis_angle_to_matrix(rot_update.squeeze())
-    return (x['ligand'].pos - lig_center) @ rot_mat.T + lig_center + tr_update
+    x['ligand'].pos = (x['ligand'].pos -
+                       lig_center) @ rot_update.T + lig_center + tr_update
+    return x
