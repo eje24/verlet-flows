@@ -6,5 +6,4 @@ Notes:
 
 Todos:
 - add in inference epochs (but need to think more about how this should be done: rmsd?)
-- no need for RDKit structures in pdbbind.py
 - finish randomize position + sampling stuff
