@@ -12,7 +12,7 @@ from rdkit import Chem
 from rdkit.Chem import RemoveHs, MolToPDBFile
 from torch_geometric.nn.data_parallel import DataParallel
 
-from models.flow import SE3VerletFlow
+from model.flow import SE3VerletFlow
 from spyrmsd import rmsd, molecule
 
 

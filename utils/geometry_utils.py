@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import HeteroGraph
+from torch_geometric.data import HeteroData
 
 
 def quaternion_to_matrix(quaternions):
@@ -84,13 +84,13 @@ def axis_angle_to_matrix(axis_angle) -> torch.Tensor:
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
 
-def apply_update(x: HeteroGraph, rot_update: torch.Tensor, tr_update: torch.Tensor) -> HeteroGraph:
+def apply_update(data: HeteroData, rot_update: torch.Tensor, tr_update: torch.Tensor) -> HeteroData:
     """
     @param update
     @param rot_update, 3 x 3
     @param tr_update, 3
     @returns x, updated
     """
-    lig_center = torch.mean(x['ligand'].pos, dim=0, keepdim=True)
-    x['ligand'].pos = (x['ligand'].pos - lig_center) @ rot_update.T + lig_center + tr_update
-    return x
+    lig_center = torch.mean(data['ligand'].pos, dim=0, keepdim=True)
+    data['ligand'].pos = (data['ligand'].pos - lig_center) @ rot_update.T + lig_center + tr_update
+    return data

@@ -1,4 +1,4 @@
-name: diffdock
+name: verlet
 channels:
   - pytorch
   - defaults

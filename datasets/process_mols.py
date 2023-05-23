@@ -4,6 +4,7 @@ import os
 import warnings
 
 import numpy as np
+import networkx as nx
 import scipy.spatial as spa
 import torch
 from Bio.PDB import PDBParser
@@ -15,12 +16,12 @@ from rdkit.Geometry import Point3D
 from scipy import spatial
 from scipy.special import softmax
 from torch_cluster import radius_graph
+from torch_geometric.utils import to_networkx
 
 
 import torch.nn.functional as F
 
 from datasets.conformer_matching import get_torsion_angles, optimize_rotatable_bonds
-from utils.torsion import get_transformation_mask
 
 
 biopython_parser = PDBParser()
@@ -303,6 +304,39 @@ def generate_conformer(mol):
         AllChem.MMFFOptimizeMolecule(mol, confId=0)
     # else:
     #    AllChem.MMFFOptimizeMolecule(mol_rdkit, confId=0)
+
+
+def get_transformation_mask(pyg_data):
+    G = to_networkx(pyg_data.to_homogeneous(), to_undirected=False)
+    to_rotate = []
+    edges = pyg_data['ligand', 'ligand'].edge_index.T.numpy()
+    for i in range(0, edges.shape[0], 2):
+        assert edges[i, 0] == edges[i+1, 1]
+
+        G2 = G.to_undirected()
+        G2.remove_edge(*edges[i])
+        if not nx.is_connected(G2):
+            l = list(sorted(nx.connected_components(G2), key=len)[0])
+            if len(l) > 1:
+                if edges[i, 0] in l:
+                    to_rotate.append([])
+                    to_rotate.append(l)
+                else:
+                    to_rotate.append(l)
+                    to_rotate.append([])
+                continue
+        to_rotate.append([])
+        to_rotate.append([])
+
+    mask_edges = np.asarray([0 if len(l) == 0 else 1 for l in to_rotate], dtype=bool)
+    mask_rotate = np.zeros((np.sum(mask_edges), len(G.nodes())), dtype=bool)
+    idx = 0
+    for i in range(len(G.edges())):
+        if mask_edges[i]:
+            mask_rotate[idx][np.asarray(to_rotate[i], dtype=int)] = True
+            idx += 1
+
+    return mask_edges, mask_rotate
 
 
 def get_lig_graph_with_matching(mol_, complex_graph, popsize, maxiter, matching, keep_original, num_conformers, remove_hs):

@@ -34,7 +34,7 @@ class InitializeVelocity(BaseTransform):
 class PDBBind(Dataset):
     def __init__(self, root, transform=None, cache_path='data/cache', split_path='data/', limit_complexes=0,
                  receptor_radius=30, num_workers=1, c_alpha_max_neighbors=None, popsize=15, maxiter=15,
-                 matching=True, keep_original=False, max_lig_size=None, remove_hs=False, num_conformers=1, all_atoms=False,
+                 matching=False, keep_original=False, max_lig_size=None, remove_hs=False, num_conformers=1, all_atoms=False,
                  atom_radius=5, atom_max_neighbors=None, esm_embeddings_path=None, require_ligand=False,
                  ligands_list=None, protein_path_list=None, ligand_descriptions=None, keep_local_structures=False):
 
@@ -394,7 +394,7 @@ def construct_loader(args):
                    'receptor_radius': args.receptor_radius,
                    'c_alpha_max_neighbors': args.c_alpha_max_neighbors,
                    'remove_hs': args.remove_hs, 'max_lig_size': args.max_lig_size,
-                   'matching': not args.no_torsion, 'popsize': args.matching_popsize, 'maxiter': args.matching_maxiter,
+                   'popsize': args.matching_popsize, 'maxiter': args.matching_maxiter,
                    'num_workers': args.num_workers, 'all_atoms': args.all_atoms,
                    'atom_radius': args.atom_radius, 'atom_max_neighbors': args.atom_max_neighbors,
                    'esm_embeddings_path': args.esm_embeddings_path}

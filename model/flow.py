@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
-from coupling_layer import SE3CouplingLayer
+from model.coupling_layer import SE3CouplingLayer
 from utils.geometry_utils import apply_update
 
 from torch_geometric.data import Batch
