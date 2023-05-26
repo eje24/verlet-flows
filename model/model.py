@@ -16,12 +16,13 @@ from datasets.process_mols import lig_feature_dims, rec_residue_feature_dims
 class AtomEncoder(torch.nn.Module):
 
     def __init__(self, emb_dim, feature_dims, lm_embedding_type=None):
-        # first element of feature_dims tuple is a list with the lenght of each categorical feature and the second is the number of scalar features
+        # first element of feature_dims tuple is a list with the length of each categorical feature and the second is the number of scalar features
         super(AtomEncoder, self).__init__()
         self.atom_embedding_list = torch.nn.ModuleList()
         self.num_categorical_features = len(feature_dims[0])
         self.num_scalar_features = feature_dims[1]
         self.lm_embedding_type = lm_embedding_type
+        # create an embedding for each categorical feature
         for i, dim in enumerate(feature_dims[0]):
             emb = torch.nn.Embedding(dim, emb_dim)
             torch.nn.init.xavier_uniform_(emb.weight.data)
@@ -102,8 +103,7 @@ class TensorProductScoreModel(torch.nn.Module):
                  ns=16, nv=4, num_conv_layers=2, lig_max_radius=5, rec_max_radius=30, cross_max_distance=250,
                  center_max_distance=30, distance_embed_dim=32, cross_distance_embed_dim=32,
                  use_second_order_repr=False, batch_norm=True,
-                 dynamic_max_cross=False, dropout=0.0, lm_embedding_type=None, confidence_mode=False,
-                 confidence_dropout=0, confidence_no_batchnorm=False, num_confidence_outputs=1):
+                 dynamic_max_cross=False, dropout=0.0, lm_embedding_type=None):
         super(TensorProductScoreModel, self).__init__()
         self.in_lig_edge_features = in_lig_edge_features
         self.lig_max_radius = lig_max_radius
@@ -116,7 +116,6 @@ class TensorProductScoreModel(torch.nn.Module):
         self.sh_irreps = o3.Irreps.spherical_harmonics(lmax=sh_lmax)
         self.ns, self.nv = ns, nv
         self.device = device
-        self.confidence_mode = confidence_mode
         self.num_conv_layers = num_conv_layers
 
         self.lig_node_embedding = AtomEncoder(
@@ -182,41 +181,26 @@ class TensorProductScoreModel(torch.nn.Module):
         self.rec_conv_layers = nn.ModuleList(rec_conv_layers)
         self.lig_to_rec_conv_layers = nn.ModuleList(lig_to_rec_conv_layers)
         self.rec_to_lig_conv_layers = nn.ModuleList(rec_to_lig_conv_layers)
+        
+        # center of mass translation and rotation components
+        self.center_distance_expansion = GaussianSmearing(
+            0.0, center_max_distance, distance_embed_dim)
+        self.center_edge_embedding = nn.Sequential(
+            nn.Linear(distance_embed_dim, ns),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(ns, ns)
+        )
 
-        if self.confidence_mode:
-            self.confidence_predictor = nn.Sequential(
-                nn.Linear(2*self.ns if num_conv_layers >= 3 else self.ns, ns),
-                nn.BatchNorm1d(
-                    ns) if not confidence_no_batchnorm else nn.Identity(),
-                nn.ReLU(),
-                nn.Dropout(confidence_dropout),
-                nn.Linear(ns, ns),
-                nn.BatchNorm1d(
-                    ns) if not confidence_no_batchnorm else nn.Identity(),
-                nn.ReLU(),
-                nn.Dropout(confidence_dropout),
-                nn.Linear(ns, num_confidence_outputs)
-            )
-        else:
-            # center of mass translation and rotation components
-            self.center_distance_expansion = GaussianSmearing(
-                0.0, center_max_distance, distance_embed_dim)
-            self.center_edge_embedding = nn.Sequential(
-                nn.Linear(distance_embed_dim, ns),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(ns, ns)
-            )
-
-            self.final_conv = TensorProductConvLayer(
-                in_irreps=self.lig_conv_layers[-1].out_irreps,
-                sh_irreps=self.sh_irreps,
-                out_irreps=f'2x1o + 2x1e',
-                n_edge_features=2 * ns,
-                residual=False,
-                dropout=dropout,
-                batch_norm=batch_norm
-            )
+        self.final_conv = TensorProductConvLayer(
+            in_irreps=self.lig_conv_layers[-1].out_irreps,
+            sh_irreps=self.sh_irreps,
+            out_irreps=f'2x1o + 2x1e',
+            n_edge_features=2 * ns,
+            residual=False,
+            dropout=dropout,
+            batch_norm=batch_norm
+        )
 
     def forward(self, data):
         # build ligand graph
@@ -275,13 +259,6 @@ class TensorProductScoreModel(torch.nn.Module):
                     rec_node_attr, (0, rec_intra_update.shape[-1] - rec_node_attr.shape[-1]))
                 rec_node_attr = rec_node_attr + rec_intra_update + rec_inter_update
 
-        # compute confidence score
-        if self.confidence_mode:
-            scalar_lig_attr = torch.cat([lig_node_attr[:, :self.ns], lig_node_attr[:, -self.ns:]],
-                                        dim=1) if self.num_conv_layers >= 3 else lig_node_attr[:, :self.ns]
-            confidence = self.confidence_predictor(scatter_mean(
-                scalar_lig_attr, data['ligand'].batch, dim=0)).squeeze(dim=-1)
-            return confidence
 
         # compute translational and rotational score vectors
         center_edge_index, center_edge_attr, center_edge_sh = self.build_center_conv_graph(
@@ -401,6 +378,7 @@ class TensorProductScoreModel(torch.nn.Module):
         return bonds, edge_index, edge_attr, edge_sh
 
 
+# for distance embedings
 class GaussianSmearing(torch.nn.Module):
     # used to embed the edge distances
     def __init__(self, start=0.0, stop=5.0, num_gaussians=50):
