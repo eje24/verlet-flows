@@ -74,7 +74,7 @@ class SE3VerletFlow(nn.Module):
             sampled poses, and
             log densities
         """
-        log_pxv = torch.zeros(data.num_graphs)
+        log_pxv = torch.zeros(data.num_graphs, device = next(self.parameters()).device)
         for i, complex in enumerate(data.to_data_list()):
             # sample translation from Gaussian centered at center of mass of protein
             protein_center = torch.mean(complex['receptor'].pos, axis=0, keepdims=True)
@@ -96,7 +96,7 @@ class SE3VerletFlow(nn.Module):
             latent poses of ligand/protein structures passed in, and
             log densities of latent poses
         """
-        log_pxv = torch.zeros(data.num_graphs, device=self.device)
+        log_pxv = torch.zeros(data.num_graphs, device = data['ligand'].pos.device)
         for coupling_layer in self.coupling_layers:
             data, delta_log_pxv = coupling_layer(
                 data, reverse=True)
@@ -123,6 +123,7 @@ class SE3VerletFlow(nn.Module):
         return self._data_to_latent(data)
     
     def forward(self, data: Batch):
-        return self.data_to_latent(data)
+        _, log_pxv = self.data_to_latent(data)
+        return log_pxv
             
         

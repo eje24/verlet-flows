@@ -53,8 +53,8 @@ def train_epoch(model, loader, optimizer, device, ema_weigths):
             print("Skipping batch of size 1 since otherwise batchnorm would not work.")
         optimizer.zero_grad()
         try:
-            _, log_pxv = model(data)
-            loss = -log_pxv
+            log_pxv = model(data)
+            loss = -torch.mean(log_pxv)
             loss.backward()
             optimizer.step()
             ema_weigths.update(model.parameters())
@@ -86,8 +86,8 @@ def test_epoch(model, loader):
     for data in tqdm(loader, total=len(loader)):
         try:
             with torch.no_grad():
-                _, log_pxv = model(data)
-            loss = -log_pxv
+                log_pxv = model(data)
+            loss = -torch.mean(log_pxv)
             meter.add([loss.cpu().detach()])
 
         except RuntimeError as e:
