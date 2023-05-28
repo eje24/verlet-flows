@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from model.model import TensorProductScoreModel
 from utils.geometry_utils import apply_update, axis_angle_to_matrix
+from torch_geometric.data import Batch
 
 
 class SE3CouplingLayer(nn.Module):
@@ -10,11 +11,15 @@ class SE3CouplingLayer(nn.Module):
         self.s_net = TensorProductScoreModel(**kwargs)
         self.t_net = TensorProductScoreModel(**kwargs)
 
-    def forward(self, data, reverse=False):
+    def forward(self, data: Batch, reverse:bool=False):
         """
-        @param data, Batch, current structure of x
-        @returns , delta_pxv
-        Satisfies log p(x_prime, v_prime) = log p(x,v) + delta_pxv
+        Implements a single SE3 Verlet coupling layer
+        
+        Args:
+            data: ligand/protein structures
+            
+        Returns:
+            change in log densities
         """
         if not reverse:
             s_rot, s_tr = self.s_net(data)
@@ -33,7 +38,7 @@ class SE3CouplingLayer(nn.Module):
                 complex = apply_update(complex, axis_angle_to_matrix(-data.v_rot[i]), -data.v_tr[i])
             s_rot, s_tr = self.s_net(data)
             t_rot, t_tr = self.t_net(data)
-            v_rot_prime = (data.v_rot - t_rot) * torch.exp(-s_rot)
-            v_tr_prime = (data.v_tr - t_tr) * torch.exp(-s_tr)
+            data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
+            data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
             delta_pxv = torch.sum(s_rot, axis=-1) + torch.sum(s_tr, axis=-1)
             return data, delta_pxv

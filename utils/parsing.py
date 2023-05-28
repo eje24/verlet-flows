@@ -34,7 +34,7 @@ def parse_train_args():
     parser.add_argument('--lr', type=float, default=1e-3, help='Initial learning rate')
     parser.add_argument('--restart_lr', type=float, default=None, help='If this is not none, the lr of the optimizer will be overwritten with this value when restarting from a checkpoint.')
     parser.add_argument('--w_decay', type=float, default=0.0, help='Weight decay added to loss')
-    parser.add_argument('--num_workers', type=int, default=5, help='Number of workers for preprocessing')
+    parser.add_argument('--num_workers', type=int, default=1, help='Number of workers for preprocessing')
     parser.add_argument('--use_ema', action='store_true', default=False, help='Whether or not to use ema for the model weights')
     parser.add_argument('--ema_rate', type=float, default=0.999, help='decay rate for the exponential moving average model parameters ')
 

@@ -104,10 +104,7 @@ def get_model(args, device, no_parallel=False):
                         use_second_order_repr=args.use_second_order_repr,
                         cross_max_distance=args.cross_max_distance,
                         dynamic_max_cross=args.dynamic_max_cross,
-                        lm_embedding_type=lm_embedding_type,
-                        num_confidence_outputs=len(
-                            args.rmsd_classification_cutoff) + 1 if 'rmsd_classification_cutoff' in args and isinstance(
-                            args.rmsd_classification_cutoff, list) else 1)
+                        lm_embedding_type=lm_embedding_type)
 
     if device.type == 'cuda' and not no_parallel:
         model = DataParallel(model)
