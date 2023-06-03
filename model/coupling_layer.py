@@ -42,3 +42,37 @@ class SE3CouplingLayer(nn.Module):
             data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
+        
+    def check_invertibility(self, data):
+        """
+        Checks that coupling layer is invertible
+        
+        Args:
+            data: ligand/protein structures
+        """
+        data_pos = data['ligand'].pos.detach().clone()
+        data_v_rot = data.v_tr.detach().clone()
+        data_v_tr = data.v_rot.detach().clone()
+        
+        print(f'Initial v_rot: {data_v_rot}')
+        print(f'Initial v_tr: {data_v_tr}')
+        
+        self.eval()
+        # go forward
+        data, _ = self.forward(data, reverse=False)
+        # go backwards
+        recreated_data, _ = self.forward(data, reverse=True) 
+        self.train()
+        
+        recreated_data_pos = recreated_data['ligand'].pos.detach().clone()
+        recreated_data_v_rot = recreated_data.v_tr.detach().clone()
+        recreated_data_v_tr = recreated_data.v_rot.detach().clone() 
+        
+        print(f'Recreated v_rot: {recreated_data_v_rot}')
+        print(f'Recreated v_tr: {recreated_data_v_tr}')
+        
+        assert torch.allclose(data_pos, recreated_data_pos, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(data_v_rot, recreated_data_v_rot, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(data_v_tr, recreated_data_v_tr, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
+        

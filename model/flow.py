@@ -97,11 +97,11 @@ class SE3VerletFlow(nn.Module):
             log densities of latent poses
         """
         log_pxv = torch.zeros(data.num_graphs, device = data['ligand'].pos.device)
-        for coupling_layer in self.coupling_layers:
+        for coupling_layer in reversed(self.coupling_layers):
             data, delta_log_pxv = coupling_layer(
                 data, reverse=True)
             log_pxv = log_pxv + delta_log_pxv
-        delta_log_pxv = log_pxv
+        delta_log_pxv = log_pxv.detach().clone()
         # determine initial densities
         for i, complex in enumerate(data.to_data_list()):
             protein_center = torch.mean(complex['receptor'].pos, axis=0, keepdims=True)
@@ -127,10 +127,19 @@ class SE3VerletFlow(nn.Module):
         _, log_pxv, _ = self.data_to_latent(data)
         return log_pxv
     
-    def check_invertible(self, data: Batch):        
+    def check_invertible(self, data: Batch): 
+        """
+        Checks that flow is invertible
+        
+        Args:
+            data: ligand/protein structures
+        """
         data_pos = data['ligand'].pos.detach().clone()
         data_v_rot = data.v_tr.detach().clone()
         data_v_tr = data.v_rot.detach().clone()
+        
+        print(f'Initial v_rot: {data_v_rot}')
+        print(f'Initial v_tr: {data_v_tr}')
         
         self.eval()
         latent_data, log_pxv, reverse_delta_log_pxv =  self._data_to_latent(data)
@@ -139,12 +148,15 @@ class SE3VerletFlow(nn.Module):
         
         recreated_data_pos = recreated_data['ligand'].pos.detach().clone()
         recreated_data_v_rot = recreated_data.v_tr.detach().clone()
-        recreated_data_v_tr = recreated_data.v_rot.detach().clone()    
+        recreated_data_v_tr = recreated_data.v_rot.detach().clone()   
+        
+        print(f'Recreated v_rot: {recreated_data_v_rot}')
+        print(f'Recreated v_tr: {recreated_data_v_tr}')
         
         assert torch.allclose(data_pos, recreated_data_pos, rtol=1e-05, atol=1e-05)
         assert torch.allclose(data_v_rot, recreated_data_v_rot, rtol=1e-05, atol=1e-05)
         assert torch.allclose(data_v_tr, recreated_data_v_tr, rtol=1e-05, atol=1e-05)
-        
+        assert torch.allclose(reverse_delta_log_pxv, forward_delta_log_pxv, rtol=1e-05, atol=1e-05)
         assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
 
         
