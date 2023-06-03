@@ -40,5 +40,5 @@ class SE3CouplingLayer(nn.Module):
             t_rot, t_tr = self.t_net(data)
             data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
             data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
-            delta_pxv = torch.sum(s_rot, axis=-1) + torch.sum(s_tr, axis=-1)
+            delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv

@@ -30,25 +30,16 @@ def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_load
         logs = {}
         train_losses = train_epoch(
             model, train_loader, optimizer, device, ema_weights)
-        print("Epoch {}: Training loss {:.4f}  tr {:.4f}   rot {:.4f}   tor {:.4f}"
-              .format(epoch, train_losses['loss'], train_losses['tr_loss'], train_losses['rot_loss'],
-                      train_losses['tor_loss']))
+        print("Epoch {}: Training loss {:.4f}"
+              .format(epoch, train_losses['loss']))
 
         ema_weights.store(model.parameters())
         if args.use_ema:
             # load ema parameters into model for running validation and inference
             ema_weights.copy_to(model.parameters())
         val_losses = test_epoch(model, val_loader)
-        print("Epoch {}: Validation loss {:.4f}  tr {:.4f}   rot {:.4f}   tor {:.4f}"
-              .format(epoch, val_losses['loss'], val_losses['tr_loss'], val_losses['rot_loss'], val_losses['tor_loss']))
-
-        # if args.val_inference_freq != None and (epoch + 1) % args.val_inference_freq == 0:
-        #     inf_metrics = inference_epoch(
-        #         model, val_loader.dataset.complex_graphs[:args.num_inference_complexes], device, args)
-        #     print("Epoch {}: Val inference rmsds_lt2 {:.3f} rmsds_lt5 {:.3f}"
-        #           .format(epoch, inf_metrics['rmsds_lt2'], inf_metrics['rmsds_lt5']))
-        #     logs.update({'valinf_' + k: v for k,
-        #                  v in inf_metrics.items()}, step=epoch + 1)
+        print("Epoch {}: Validation loss {:.4f}"
+              .format(epoch, val_losses['loss']))
 
         if not args.use_ema:
             ema_weights.copy_to(model.parameters())

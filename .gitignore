@@ -1,4 +1,4 @@
-/annotated
 /data
+/workdir
 *__pycache__/
 *.ipynb_checkpoints/

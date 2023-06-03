@@ -1,7 +1,7 @@
 # from https://github.com/gcorso/DiffDock/blob/main/utils/parsing.py
 from argparse import ArgumentParser,FileType
 
-def parse_train_args():
+def parse_train_args(manual_args = None):
 
     # General arguments
     parser = ArgumentParser()
@@ -29,6 +29,7 @@ def parse_train_args():
     # Training arguments
     parser.add_argument('--n_epochs', type=int, default=400, help='Number of epochs for training')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--overfit', action='store_true', default=False, help='Whether or not to overfit to a single structure/pose')
     parser.add_argument('--scheduler', type=str, default=None, help='LR scheduler')
     parser.add_argument('--scheduler_patience', type=int, default=20, help='Patience of the LR scheduler')
     parser.add_argument('--lr', type=float, default=1e-3, help='Initial learning rate')
@@ -66,5 +67,5 @@ def parse_train_args():
     parser.add_argument('--dynamic_max_cross', action='store_true', default=False, help='Whether to use the dynamic distance cutoff')
     parser.add_argument('--dropout', type=float, default=0.0, help='MLP dropout')
 
-    args = parser.parse_args()
+    args = parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
     return args

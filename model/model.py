@@ -271,7 +271,6 @@ class TensorProductScoreModel(torch.nn.Module):
 
         tr_pred = global_pred[:, :3] + global_pred[:, 6:9]
         rot_pred = global_pred[:, 3:6] + global_pred[:, 9:]
-        print(f'Returning results!')
         return tr_pred, rot_pred
 
     def build_lig_conv_graph(self, data):

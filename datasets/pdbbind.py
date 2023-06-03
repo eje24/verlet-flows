@@ -32,7 +32,7 @@ class InitializeVelocity(BaseTransform):
 
 
 class PDBBind(Dataset):
-    def __init__(self, root, transform=None, cache_path='data/cache', split_path='data/', limit_complexes=0,
+    def __init__(self, root, overfit=False, transform=None, cache_path='data/cache', split_path='data/', limit_complexes=0,
                  receptor_radius=30, num_workers=1, c_alpha_max_neighbors=None, popsize=15, maxiter=15,
                  matching=False, keep_original=False, max_lig_size=None, remove_hs=False, num_conformers=1, all_atoms=False,
                  atom_radius=5, atom_max_neighbors=None, esm_embeddings_path=None, require_ligand=False,
@@ -40,6 +40,7 @@ class PDBBind(Dataset):
 
         super(PDBBind, self).__init__(root, transform)
         self.pdbbind_dir = root
+        self.overfit = overfit
         self.max_lig_size = max_lig_size
         self.split_path = split_path
         self.limit_complexes = limit_complexes
@@ -93,6 +94,8 @@ class PDBBind(Dataset):
         return len(self.complex_graphs)
 
     def get(self, idx):
+        if self.overfit:
+            idx = 0
         if self.require_ligand:
             complex_graph = copy.deepcopy(self.complex_graphs[idx])
             complex_graph.mol = copy.deepcopy(self.rdkit_ligands[idx])
@@ -390,8 +393,8 @@ def print_statistics(complex_graphs):
 def construct_loader(args):
     transform = InitializeVelocity()
 
-    common_args = {'transform': transform, 'root': args.data_dir, 'limit_complexes': args.limit_complexes,
-                   'receptor_radius': args.receptor_radius,
+    common_args = {'overfit': args.overfit, 'transform': transform, 'root': args.data_dir, 
+                   'limit_complexes': args.limit_complexes, 'receptor_radius': args.receptor_radius,
                    'c_alpha_max_neighbors': args.c_alpha_max_neighbors,
                    'remove_hs': args.remove_hs, 'max_lig_size': args.max_lig_size,
                    'popsize': args.matching_popsize, 'maxiter': args.matching_maxiter,
