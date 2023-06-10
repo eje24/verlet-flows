@@ -1,19 +1,21 @@
 import torch.nn as nn
 import torch
-from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
-from model.coupling_layer import SE3CouplingLayer
-from utils.geometry_utils import apply_update
-
 from torch_geometric.data import Batch
 
+from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
+from utils.geometry_utils import apply_update
+from model.score_model import DockingScoreModel
 
-class SE3VerletFlow(nn.Module):
-    def __init__(self, device, num_coupling_layers=5, **kwargs):
+
+class DockingVerletFlow(SE3VerletFlow):
+    """
+    SE3 Verlet flow for docking
+    """
+    def __init__(self, device, num_coupling_layers=5, score_model = DockingScoreModel, **kwargs):
         super().__init__()
-        self.device = device
         self.num_coupling_layers = num_coupling_layers
         self.coupling_layers = nn.ModuleList(
-            [SE3CouplingLayer(device=device, **kwargs) for _ in range(num_coupling_layers)])
+            [DockingCouplingLayer(score_model = score_model, **kwargs) for _ in range(num_coupling_layers)])
 
     def log_x_latent_density(self, noise_tr: torch.Tensor):
         """
@@ -157,6 +159,81 @@ class SE3VerletFlow(nn.Module):
         assert torch.allclose(data_v_rot, recreated_data_v_rot, rtol=1e-05, atol=1e-05)
         assert torch.allclose(data_v_tr, recreated_data_v_tr, rtol=1e-05, atol=1e-05)
         assert torch.allclose(reverse_delta_log_pxv, forward_delta_log_pxv, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
+    
+        
+class DockingCouplingLayer(nn.Module):
+    """
+    SE3 Verlet coupling layer for docking
+    """
+    def __init__(self, score_model, **kwargs):
+        super().__init__()
+        self.s_net = score_model(**kwargs)
+        self.t_net = score_model(**kwargs)
+
+    def forward(self, data: Batch, reverse:bool=False):
+        """
+        Implements a single SE3 Verlet coupling layer
+        
+        Args:
+            data: ligand/protein structures
+            
+        Returns:
+            change in log densities
+        """
+        if not reverse:
+            s_rot, s_tr = self.s_net(data)
+            t_rot, t_tr = self.t_net(data)
+            data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
+            data.v_tr = data.v_tr * torch.exp(s_tr) + t_tr
+            v_rot_prime_mat = axis_angle_to_matrix(data.v_rot)
+            for (i, complex) in enumerate(data.to_data_list()):
+                complex = apply_update(
+                    complex, v_rot_prime_mat[i], data.v_tr[i])
+            delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
+            return data, delta_pxv
+        else:
+            # backward mapping
+            for (i, complex) in enumerate(data.to_data_list()):
+                complex = apply_update(complex, axis_angle_to_matrix(-data.v_rot[i]), -data.v_tr[i])
+            s_rot, s_tr = self.s_net(data)
+            t_rot, t_tr = self.t_net(data)
+            data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
+            data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
+            delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
+            return data, delta_pxv
+        
+    def check_invertibility(self, data):
+        """
+        Checks that coupling layer is invertible
+        
+        Args:
+            data: ligand/protein structures
+        """
+        data_pos = data['ligand'].pos.detach().clone()
+        data_v_rot = data.v_tr.detach().clone()
+        data_v_tr = data.v_rot.detach().clone()
+        
+        print(f'Initial v_rot: {data_v_rot}')
+        print(f'Initial v_tr: {data_v_tr}')
+        
+        self.eval()
+        # go forward
+        data, _ = self.forward(data, reverse=False)
+        # go backwards
+        recreated_data, _ = self.forward(data, reverse=True) 
+        self.train()
+        
+        recreated_data_pos = recreated_data['ligand'].pos.detach().clone()
+        recreated_data_v_rot = recreated_data.v_tr.detach().clone()
+        recreated_data_v_tr = recreated_data.v_rot.detach().clone() 
+        
+        print(f'Recreated v_rot: {recreated_data_v_rot}')
+        print(f'Recreated v_tr: {recreated_data_v_tr}')
+        
+        assert torch.allclose(data_pos, recreated_data_pos, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(data_v_rot, recreated_data_v_rot, rtol=1e-05, atol=1e-05)
+        assert torch.allclose(data_v_tr, recreated_data_v_tr, rtol=1e-05, atol=1e-05)
         assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
 
         

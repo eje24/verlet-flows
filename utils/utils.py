@@ -12,7 +12,7 @@ from rdkit import Chem
 from rdkit.Chem import RemoveHs, MolToPDBFile
 from torch_geometric.nn.data_parallel import DataParallel
 
-from model.flow import SE3VerletFlow
+from model.docking_flow import DockingVerletFlow
 from spyrmsd import rmsd, molecule
 
 
@@ -91,7 +91,7 @@ def get_model(args, device, no_parallel=False):
     if args.esm_embeddings_path is not None:
         lm_embedding_type = 'esm'
     
-    model_class = SE3VerletFlow
+    model_class = DockingVerletFlow
     model = model_class(device=device,
                         num_coupling_layers=args.num_coupling_layers,
                         num_conv_layers=args.num_conv_layers,

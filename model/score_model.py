@@ -11,6 +11,7 @@ import numpy as np
 from e3nn.nn import BatchNorm
 
 from datasets.process_mols import lig_feature_dims, rec_residue_feature_dims
+from models.model_utils import GaussianSmearing, TensorProductConvLayer
 
 
 class AtomEncoder(torch.nn.Module):
@@ -58,48 +59,8 @@ class AtomEncoder(torch.nn.Module):
                 torch.cat([x_embedding, x[:, -self.lm_embedding_dim:]], axis=1))
         return x_embedding
 
-
-class TensorProductConvLayer(torch.nn.Module):
-    def __init__(self, in_irreps, sh_irreps, out_irreps, n_edge_features, residual=True, batch_norm=True, dropout=0.0,
-                 hidden_features=None):
-        super(TensorProductConvLayer, self).__init__()
-        self.in_irreps = in_irreps
-        self.out_irreps = out_irreps
-        self.sh_irreps = sh_irreps
-        self.residual = residual
-        if hidden_features is None:
-            hidden_features = n_edge_features
-
-        self.tp = tp = o3.FullyConnectedTensorProduct(
-            in_irreps, sh_irreps, out_irreps, shared_weights=False)
-
-        self.fc = nn.Sequential(
-            nn.Linear(n_edge_features, hidden_features),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_features, tp.weight_numel)
-        )
-        self.batch_norm = BatchNorm(out_irreps) if batch_norm else None
-
-    def forward(self, node_attr, edge_index, edge_attr, edge_sh, out_nodes=None, reduce='mean'):
-
-        edge_src, edge_dst = edge_index
-        tp = self.tp(node_attr[edge_dst], edge_sh, self.fc(edge_attr))
-
-        out_nodes = out_nodes or node_attr.shape[0]
-        out = scatter(tp, edge_src, dim=0, dim_size=out_nodes, reduce=reduce)
-
-        if self.residual:
-            padded = F.pad(node_attr, (0, out.shape[-1] - node_attr.shape[-1]))
-            out = out + padded
-
-        if self.batch_norm:
-            out = self.batch_norm(out)
-        return out
-
-
-class TensorProductScoreModel(torch.nn.Module):
-    def __init__(self, device, in_lig_edge_features=4, sh_lmax=2,
+class DockingScoreModel(torch.nn.Module):
+    def __init__(self, in_lig_edge_features=4, sh_lmax=2,
                  ns=16, nv=4, num_conv_layers=2, lig_max_radius=5, rec_max_radius=30, cross_max_distance=250,
                  center_max_distance=30, distance_embed_dim=32, cross_distance_embed_dim=32,
                  use_second_order_repr=False, batch_norm=True,
@@ -115,7 +76,6 @@ class TensorProductScoreModel(torch.nn.Module):
         self.cross_distance_embed_dim = cross_distance_embed_dim
         self.sh_irreps = o3.Irreps.spherical_harmonics(lmax=sh_lmax)
         self.ns, self.nv = ns, nv
-        self.device = device
         self.num_conv_layers = num_conv_layers
 
         self.lig_node_embedding = AtomEncoder(
