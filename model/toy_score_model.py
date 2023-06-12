@@ -5,47 +5,56 @@ from models.model_utils import GaussianSmearing
 from utils.geometric_utils import matrix_to_axis_angle
 
 class FrameDockingScoreModel(torch.nn.Module):
+    """
+    receptor:       ligand:
+    1               1
+    |               |
+    0 - 2           0 - 2
+    |               |
+    3               3
+    """
     def __init__(self, distance_embed_dim = 4, max_cross_offset = 5):
         super().__init__()
-        self.distance_embed_dim = 4
+        self.distance_embed_dim = 5
         self.offset_distance_embedding = GaussianSmearing(
             0.0, max_cross_offset, distance_embed_dim)
         
-        self.tp1 = o3.FullTensorProduct(irreps_in1 = '1e', irreps_in2 = '1e', internal_weights = True)
-        self.tp2 = o3.FullTensorProduct(irreps_in1 = tp1.irreps_out, irreps_in2 = '1e', internal_weights = True)
-        self.tp3 = o3.FullyConnectedTensorProduct(irreps_in1 = tp2.irreps_out, irreps_in2 = f'{3 + distance_embed_dim}x0e', irreps_out = '9x0e + 1e', internal_weights = True)
+        self.tp1 = o3.FullyConnectedTensorProduct(irreps_in1 = f'{self.distance_embed_dim}x0e + 1e', irreps_in2 = f'{distance_embed_dim}x0e + 1e', irreps_out = '20x0e + 5x1e', internal_weights = True)
+        self.tp2 = o3.FullyConnectedTensorProduct(irreps_in1 = tp1.irreps_out, irreps_in2 = f'{self.distance_embed_dim}x0e + 1e', irreps_out = '9x0e + 1x1e', internal_weights = True)
                   
     def forward(self, data):
         """
-        receptor:       ligand:
-        1               1
-        |               |
-        0 - 2           0 - 2
-        |               |
-        3               3
+        Args:
+            data: ligand and receptor frames
+        Returns:
+            s_rot, s_tr, t_rot, t_tr: scores
         """
         # cross vectors
-        cross_vec_1 = data['ligand'].pos[...,1,:] - data['receptor'].pos[...,0,:]
-        cross_vec_2 = data['ligand'].pos[...,2,:] - data['receptor'].pos[...,0,:]
-        cross_vec_3 = data['ligand'].pos[...,3,:] - data['receptor'].pos[...,0,:]
+        edge_vec = data['ligand'].pos - data['receptor'].pos
         
         # distance
-        offset = torch.mean(data['ligand'].pos - data['receptor'].pos, axis = -2)
+        distances = torch.sqrt(torch.sum(torch.square(edge_vec[:,1:4]), axis = -1, keepdims=True))
         offset_distance_embedding = self.offset_distance_embedding(offset)
         
-        # orientation
-        ligand_edges = data['ligand'].pos[...,1:,:] - data['ligand'].pos[...,:1,:]
-        receptor_edges = data['receptor'].pos[...,1:,:] - data['receptor'].pos[...,:1,:]
-        relative_edges = ligand_edges @ receptor_edges
-        orientation = matrix_to_axis_angle(relative_edges)
+        # normalize edge features
+        edge_vec = edge_vec / distances
         
-        # concatenate distance embedding and orientation scalars
-        scalar_features = torch.cat([offset_distance_embedding, orientation], axis=-1)
+        # masks
+        num_edges = edge_vec.shape[0]
+        edge_mask1 = [idx for idx in range(num_edges) if idx % 4 == 1]
+        edge_mask2 = [idx for idx in range(num_edges) if idx % 4 == 2]
+        edge_mask3 = [idx for idx in range(num_edges) if idx % 4 == 3]
         
-        output = self.tp1(cross_vec1, cross_vec2)
-        output = self.tp2(output, cross_vec3)
-        output = self.tp3(output, scalar_features)
+        # construct {self.distance_embed_dim}x0e + 1e features
+        edge_features1 = edge_vec[edge_mask1]
+        edge_features2 = edge_vec[edge_mask2]
+        edge_features3 = edge_vec[edge_mask3]
         
+        # compute features tensor features tensor features
+        output = self.tp1(edge_features1, edge_features2)
+        output = self.tp2(output, edge_features3)
+        
+        # return scores
         s_rot, s_tr = output[:,:3], output[:,3:6]
         t_rot, t_tr = output[6:9], output[9:12]
         return s_rot, s_tr, t_rot, t_tr

@@ -4,14 +4,14 @@ from torch_geometric.data import Batch
 
 from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
 from utils.geometry_utils import apply_update
-from model.score_model import DockingScoreModel
+from model.toy_score_model import FrameDockingScoreModel
 
 
 class DockingVerletFlow(SE3VerletFlow):
     """
     SE3 Verlet flow for docking
     """
-    def __init__(self, device, num_coupling_layers=5, score_model = DockingScoreModel, **kwargs):
+    def __init__(self, device, num_coupling_layers=5, score_model = FrameDockingScoreModel, **kwargs):
         super().__init__()
         self.num_coupling_layers = num_coupling_layers
         self.coupling_layers = nn.ModuleList(
@@ -168,8 +168,9 @@ class DockingCouplingLayer(nn.Module):
     """
     def __init__(self, score_model, **kwargs):
         super().__init__()
-        self.s_net = score_model(**kwargs)
-        self.t_net = score_model(**kwargs)
+        self.st_net = score_model(**kwargs)
+        # constrain timestep to be >0
+        self.log_timestep = nn.Parameter()
 
     def forward(self, data: Batch, reverse:bool=False):
         """
@@ -181,21 +182,27 @@ class DockingCouplingLayer(nn.Module):
         Returns:
             change in log densities
         """
+        # compute timestep 
+        timestep = torch.exp(self.log_timestep)
         if not reverse:
-            s_rot, s_tr = self.s_net(data)
+            s_rot, s_tr, t_rot, t_tr = self.st_net(data)
             t_rot, t_tr = self.t_net(data)
             data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
             data.v_tr = data.v_tr * torch.exp(s_tr) + t_tr
-            v_rot_prime_mat = axis_angle_to_matrix(data.v_rot)
+            update_rot = timestep * data.v_rot
+            update_tr = timestep * data.v_tr
+            v_rot_prime_mat = axis_angle_to_matrix(update_rot)
             for (i, complex) in enumerate(data.to_data_list()):
                 complex = apply_update(
-                    complex, v_rot_prime_mat[i], data.v_tr[i])
+                    complex, v_rot_prime_mat[i], update_tr[i])
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
         else:
             # backward mapping
+            update_rot = timestep * data.v_rot
+            update_tr = timestep * data.v_tr
             for (i, complex) in enumerate(data.to_data_list()):
-                complex = apply_update(complex, axis_angle_to_matrix(-data.v_rot[i]), -data.v_tr[i])
+                complex = apply_update(complex, axis_angle_to_matrix(-update_rot[i]), -update_tr[i])
             s_rot, s_tr = self.s_net(data)
             t_rot, t_tr = self.t_net(data)
             data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
