@@ -7,7 +7,7 @@ from utils.geometry_utils import apply_update
 from model.toy_score_model import FrameDockingScoreModel
 
 
-class DockingVerletFlow(SE3VerletFlow):
+class DockingVerletFlow(nn.Module):
     """
     SE3 Verlet flow for docking
     """
