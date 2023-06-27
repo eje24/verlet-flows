@@ -1,8 +1,8 @@
-from optional import Tuple
+from typing import Tuple
 from collections import namedtuple
 
 import torch
-from torch.utils.data import Dataset, DataLoader, Transform
+from torch.utils.data import Dataset, DataLoader 
 from scipy.spatial.transform import Rotation as R
 
 VerletFrame = namedtuple('VerletFrame', ['receptor', 'ligand', 'v_rot', 'v_tr'])
@@ -32,7 +32,6 @@ class FrameDataset(Dataset):
         return self.receptor @ random_rotation, self.ligand @ random_rotation, v_rot, v_tr
     
     
-    @static_method
     def construct_loaders(self, num_items: int, *args, **kwargs) -> Tuple[DataLoader, DataLoader]:
         """
         Args:
@@ -40,15 +39,12 @@ class FrameDataset(Dataset):
         Returns:
             training and validation loaders
         """
-        transform = FrameNoiseTransform()
-        
         train_dataset = FrameDataset(cache_path=args.cache_path, split_path=args.split_train, keep_original=True,
-                                num_conformers=args.num_conformers, **common_args)
+                                num_conformers=args.num_conformers)
         val_dataset = FrameDataset(cache_path=args.cache_path,
-                              split_path=args.split_val, keep_original=True, **common_args)
+                              split_path=args.split_val, keep_original=True)
         
-        #TBD adapt to non-torch geometric version
-        loader_class = DataListLoader if torch.cuda.is_available() else DataLoader
+        loader_class = DataLoader
         train_loader = loader_class(dataset=train_dataset, batch_size=args.batch_size,
                                     num_workers=args.num_dataloader_workers, shuffle=True)
         val_loader = loader_class(dataset=val_dataset, batch_size=args.batch_size,

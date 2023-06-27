@@ -2,8 +2,9 @@ import torch.nn as nn
 import torch
 
 from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
-from utils.geometry_utils import apply_update
+from utils.geometry_utils import axis_angle_to_matrix, apply_update
 from model.frame_docking.frame_score_model import FrameDockingScoreModel
+from datasets.frame_dataset import VerletFrame
 
 
 class FrameDockingVerletFlow(nn.Module):
@@ -62,7 +63,7 @@ class FrameDockingVerletFlow(nn.Module):
             delta_log_pxv = delta_log_pxv + _delta_log_pxv
         return data, log_pxv_initial + delta_log_pxv, delta_log_pxv
 
-    def latent_to_data(self, data, noise_rot: torch.Tensor, noise_tr: torch.Tensor):
+    def latent_to_data(self, data: VerletFrame, noise_rot: torch.Tensor, noise_tr: torch.Tensor):
         """
         Wrapper around _latent_to_data, 
         computes image of data under the flow and log densities
@@ -70,7 +71,7 @@ class FrameDockingVerletFlow(nn.Module):
         Args:
             data: ligand/protein structure
             noise_rot: noising rotation to apply to ligand
-            noise_tr: noising translation to apply to ligand
+            
             
         Returns:
             sampled poses, and
@@ -81,16 +82,10 @@ class FrameDockingVerletFlow(nn.Module):
         protein_center = torch.mean(data.receptor, axis=1)
         ligand_center = torch.mean(data.ligand, axis=1)
         apply_update(data, noise_rot, protein_center - ligand_center + noise_tr)
-        log_pxv = self.log_x_latent_density(noise_tr) + self.log_v_latent_density
-
-            # sample translation from Gaussian centered at center of mass of protein
-            protein_center = torch.mean(complex['receptor'].pos, axis=0, keepdims=True)
-            ligand_center = torch.mean(complex['ligand'].pos, axis=0, keepdims=True)
-            complex = apply_update(complex, noise_rot[i], protein_center - ligand_center + noise_tr)
-            log_pxv[i] = self.log_x_latent_density(noise_tr[i]) + self.log_v_latent_density(data.v_rot[i], data.v_tr[i])
+        log_pxv = self.log_x_latent_density(noise_tr) + self.log_v_latent_density(data.v_rot, data.v_tr)
         return self._latent_to_data(data, log_pxv)
 
-    def _data_to_latent(self, data: Batch):
+    def _data_to_latent(self, data: VerletFrame):
         """
         Computes the pre-image of data under the flow and the latent log densities
         
@@ -101,21 +96,20 @@ class FrameDockingVerletFlow(nn.Module):
             latent poses of ligand/protein structures passed in, and
             log densities of latent poses
         """
-        log_pxv = torch.zeros(data.num_graphs, device = data['ligand'].pos.device)
+        log_pxv = torch.zeros(data.shape[0], device = data.ligand.device)
         for coupling_layer in reversed(self.coupling_layers):
             data, delta_log_pxv = coupling_layer(
                 data, reverse=True)
             log_pxv = log_pxv + delta_log_pxv
         delta_log_pxv = log_pxv.detach().clone()
-        # determine initial densities
-        for i, complex in enumerate(data.to_data_list()):
-            protein_center = torch.mean(complex['receptor'].pos, axis=0, keepdims=True)
-            ligand_center = torch.mean(complex['ligand'].pos, axis=0, keepdims=True)
-            log_pxv[i] = log_pxv[i] + self.log_x_latent_density((ligand_center - protein_center).reshape((1,3)))
-            log_pxv[i] = log_pxv[i] + self.log_v_latent_density(data.v_rot[i].reshape((1,3)), data.v_tr[i].reshape((1,3)))
+        
+        protein_center = torch.mean(data.receptor, dim=1)
+        ligand_center = torch.mean(data.ligand, dim=1)
+        log_pxv = log_pxv + self.log_x_latent_density((ligand_center - protein_center).reshape((-1,1,3)))
+        log_pxv = log_pxv + self.log_v_latent_density((data.v_rot, data.v_tr))
         return data, log_pxv, delta_log_pxv
 
-    def data_to_latent(self, data: Batch):
+    def data_to_latent(self, data: VerletFrame):
         """
         Computes the pre-image of data under the flow and the latent log densities
         
@@ -132,14 +126,14 @@ class FrameDockingVerletFlow(nn.Module):
         _, log_pxv, _ = self.data_to_latent(data)
         return log_pxv
     
-    def check_invertible(self, data: Batch): 
+    def check_invertible(self, data: VerletFrame): 
         """
         Checks that flow is invertible
         
         Args:
             data: ligand/protein structures
         """
-        data_pos = data['ligand'].pos.detach().clone()
+        data_pos = data.detach().clone()
         data_v_rot = data.v_tr.detach().clone()
         data_v_tr = data.v_rot.detach().clone()
         
@@ -151,7 +145,7 @@ class FrameDockingVerletFlow(nn.Module):
         recreated_data, recreated_log_pxv, forward_delta_log_pxv = self._latent_to_data(latent_data, log_pxv - reverse_delta_log_pxv)
         self.train()
         
-        recreated_data_pos = recreated_data['ligand'].pos.detach().clone()
+        recreated_data_pos = recreated_data.detach().clone()
         recreated_data_v_rot = recreated_data.v_tr.detach().clone()
         recreated_data_v_tr = recreated_data.v_rot.detach().clone()   
         
@@ -169,13 +163,13 @@ class FrameDockingCouplingLayer(nn.Module):
     """
     SE3 Verlet coupling layer for docking
     """
-    def __init__(self, score_model, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
-        self.st_net = score_model(**kwargs)
+        self.st_net = FrameDockingScoreModel(**kwargs)
         # constrain timestep to be >0
         self.log_timestep = nn.Parameter()
 
-    def forward(self, data: Batch, reverse:bool=False):
+    def forward(self, data: VerletFrame, reverse:bool=False):
         """
         Implements a single SE3 Verlet coupling layer
         
@@ -188,24 +182,23 @@ class FrameDockingCouplingLayer(nn.Module):
         # compute timestep 
         timestep = torch.exp(self.log_timestep)
         if not reverse:
+            # forward coupling step
             s_rot, s_tr, t_rot, t_tr = self.st_net(data)
             t_rot, t_tr = self.t_net(data)
             data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
             data.v_tr = data.v_tr * torch.exp(s_tr) + t_tr
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
-            v_rot_prime_mat = axis_angle_to_matrix(update_rot)
-            for (i, complex) in enumerate(data.to_data_list()):
-                complex = apply_update(
-                    complex, v_rot_prime_mat[i], update_tr[i])
+            v_rot_matrix = axis_angle_to_matrix(update_rot)
+            apply_update(data, v_rot_matrix, update_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
         else:
-            # backward mapping
+            # backward coupling step
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
-            for (i, complex) in enumerate(data.to_data_list()):
-                complex = apply_update(complex, axis_angle_to_matrix(-update_rot[i]), -update_tr[i])
+            negative_v_rot_matrix = axis_angle_to_matrix(-update_rot)
+            apply_update(data, negative_v_rot_matrix, -data.v_tr)
             s_rot, s_tr = self.s_net(data)
             t_rot, t_tr = self.t_net(data)
             data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
@@ -213,14 +206,14 @@ class FrameDockingCouplingLayer(nn.Module):
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
         
-    def check_invertibility(self, data):
+    def check_invertibility(self, data: VerletFrame):
         """
         Checks that coupling layer is invertible
         
         Args:
             data: ligand/protein structures
         """
-        data_pos = data['ligand'].pos.detach().clone()
+        data_pos = data.detach().clone()
         data_v_rot = data.v_tr.detach().clone()
         data_v_tr = data.v_rot.detach().clone()
         
@@ -234,7 +227,7 @@ class FrameDockingCouplingLayer(nn.Module):
         recreated_data, _ = self.forward(data, reverse=True) 
         self.train()
         
-        recreated_data_pos = recreated_data['ligand'].pos.detach().clone()
+        recreated_data_pos = recreated_data.detach().clone()
         recreated_data_v_rot = recreated_data.v_tr.detach().clone()
         recreated_data_v_tr = recreated_data.v_rot.detach().clone() 
         
@@ -244,7 +237,6 @@ class FrameDockingCouplingLayer(nn.Module):
         assert torch.allclose(data_pos, recreated_data_pos, rtol=1e-05, atol=1e-05)
         assert torch.allclose(data_v_rot, recreated_data_v_rot, rtol=1e-05, atol=1e-05)
         assert torch.allclose(data_v_tr, recreated_data_v_tr, rtol=1e-05, atol=1e-05)
-        assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
 
         
         

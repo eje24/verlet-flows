@@ -1,22 +1,18 @@
 import yaml
 import resource
-import copy
 import math
 import os
-from functools import partial
 
 import wandb
 import torch
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 from utils.parsing import parse_train_args
-from datasets.rigid_frames import FrameDataset, VerletFrame
+from datasets.frame_dataset import FrameDataset, VerletFrame
+from model.frame_docking.frame_docking_flow import FrameDockingVerletFlow 
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
-
-def loss_function(log_pxv):
-    return -log_pxv
 
 
 class AverageMeter():
@@ -67,7 +63,6 @@ def train_epoch(model, loader, optimizer, device):
             loss = -torch.mean(log_pxv)
             loss.backward()
             optimizer.step()
-            ema_weigths.update(model.parameters())
             meter.add([loss.cpu().detach()])
         except RuntimeError as e:
             if 'out of memory' in str(e):
@@ -146,27 +141,15 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode='min'):
 
 
 def get_model(args, device, no_parallel=False):
-    lm_embedding_type = None
-    if args.esm_embeddings_path is not None:
-        lm_embedding_type = 'esm'
-    
-    model_class = DockingVerletFlow
+    model_class = FrameDockingVerletFlow
     model = model_class(device=device,
                         num_coupling_layers=args.num_coupling_layers,
                         num_conv_layers=args.num_conv_layers,
                         lig_max_radius=args.max_radius,
                         ns=args.ns, nv=args.nv,
                         distance_embed_dim=args.distance_embed_dim,
-                        cross_distance_embed_dim=args.cross_distance_embed_dim,
-                        batch_norm=not args.no_batch_norm,
                         dropout=args.dropout,
-                        use_second_order_repr=args.use_second_order_repr,
-                        cross_max_distance=args.cross_max_distance,
-                        dynamic_max_cross=args.dynamic_max_cross,
-                        lm_embedding_type=lm_embedding_type)
-
-    if device.type == 'cuda' and not no_parallel:
-        model = DataParallel(model)
+                        )
     model.to(device)
     return model
 

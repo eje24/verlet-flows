@@ -1,8 +1,7 @@
 import torch
 from e3nn import o3
 
-from models.model_utils import GaussianSmearing
-from utils.geometric_utils import matrix_to_axis_angle
+from model.model_utils import GaussianSmearing
 
 class FrameDockingScoreModel(torch.nn.Module):
     """
