@@ -1,7 +1,3 @@
-from utils.utils import save_yaml_file, get_optimizer_and_scheduler, get_model, ExponentialMovingAverage
-from utils.training import train_epoch, test_epoch
-from utils.parsing import parse_train_args
-from datasets.pdbbind import construct_loader
 import yaml
 import resource
 import copy
@@ -13,8 +9,166 @@ import wandb
 import torch
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+from utils.parsing import parse_train_args
+from datasets.rigid_frames import FrameDataset, VerletFrame
+
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
+
+def loss_function(log_pxv):
+    return -log_pxv
+
+
+class AverageMeter():
+    def __init__(self, types, unpooled_metrics=False, intervals=1):
+        self.types = types
+        self.intervals = intervals
+        self.count = 0 if intervals == 1 else torch.zeros(
+            len(types), intervals)
+        self.acc = {t: torch.zeros(intervals) for t in types}
+        self.unpooled_metrics = unpooled_metrics
+
+    def add(self, vals, interval_idx=None):
+        if self.intervals == 1:
+            self.count += 1 if vals[0].dim() == 0 else len(vals[0])
+            for type_idx, v in enumerate(vals):
+                self.acc[self.types[type_idx]
+                         ] += v.sum() if self.unpooled_metrics else v
+        else:
+            for type_idx, v in enumerate(vals):
+                self.count[type_idx].index_add_(
+                    0, interval_idx[type_idx], torch.ones(len(v)))
+                if not torch.allclose(v, torch.tensor(0.0)):
+                    self.acc[self.types[type_idx]].index_add_(
+                        0, interval_idx[type_idx], v)
+
+    def summary(self):
+        if self.intervals == 1:
+            out = {k: v.item() / self.count for k, v in self.acc.items()}
+            return out
+        else:
+            out = {}
+            for i in range(self.intervals):
+                for type_idx, k in enumerate(self.types):
+                    out['int' + str(i) + '_' + k] = (
+                        list(self.acc.values())[type_idx][i] / self.count[type_idx][i]).item()
+            return out
+
+
+def train_epoch(model, loader, optimizer, device):
+    model.train()
+    meter = AverageMeter(['loss'])
+
+    for (receptor, ligand, v_rot, v_tr) in tqdm(loader, total=len(loader)):
+        optimizer.zero_grad()
+        try:
+            data = VerletFrame(receptor, ligand, v_rot, v_tr)
+            log_pxv = model(data)
+            loss = -torch.mean(log_pxv)
+            loss.backward()
+            optimizer.step()
+            ema_weigths.update(model.parameters())
+            meter.add([loss.cpu().detach()])
+        except RuntimeError as e:
+            if 'out of memory' in str(e):
+                print('| WARNING: ran out of memory, skipping batch')
+                for p in model.parameters():
+                    if p.grad is not None:
+                        del p.grad  # free some memory
+                torch.cuda.empty_cache()
+                continue
+            elif 'Input mismatch' in str(e):
+                print('| WARNING: weird torch_cluster error, skipping batch')
+                for p in model.parameters():
+                    if p.grad is not None:
+                        del p.grad  # free some memory
+                torch.cuda.empty_cache()
+                continue
+            else:
+                raise e
+    return meter.summary()
+
+
+def test_epoch(model, loader):
+    model.eval()
+    meter = AverageMeter(['loss'],
+                         unpooled_metrics=True)
+    for data in tqdm(loader, total=len(loader)):
+        try:
+            with torch.no_grad():
+                log_pxv = model(VerletFrame(*data))
+            loss = -torch.mean(log_pxv)
+            meter.add([loss.cpu().detach()])
+
+        except RuntimeError as e:
+            if 'out of memory' in str(e):
+                print('| WARNING: ran out of memory, skipping batch')
+                for p in model.parameters():
+                    if p.grad is not None:
+                        del p.grad  # free some memory
+                torch.cuda.empty_cache()
+                continue
+            elif 'Input mismatch' in str(e):
+                print('| WARNING: weird torch_cluster error, skipping batch')
+                for p in model.parameters():
+                    if p.grad is not None:
+                        del p.grad  # free some memory
+                torch.cuda.empty_cache()
+                continue
+            else:
+                raise e
+
+    out = meter.summary()
+    return out
+
+def save_yaml_file(path, content):
+    assert isinstance(
+        path, str), f'path must be a string, got {path} which is a {type(path)}'
+    content = yaml.dump(data=content)
+    if '/' in path and os.path.dirname(path) and not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    with open(path, 'w') as f:
+        f.write(content)
+
+
+def get_optimizer_and_scheduler(args, model, scheduler_mode='min'):
+    optimizer = torch.optim.Adam(filter(
+        lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.w_decay)
+
+    if args.scheduler == 'plateau':
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode=scheduler_mode, factor=0.7,
+                                                               patience=args.scheduler_patience, min_lr=args.lr / 100)
+    else:
+        print('No scheduler')
+        scheduler = None
+
+    return optimizer, scheduler
+
+
+def get_model(args, device, no_parallel=False):
+    lm_embedding_type = None
+    if args.esm_embeddings_path is not None:
+        lm_embedding_type = 'esm'
+    
+    model_class = DockingVerletFlow
+    model = model_class(device=device,
+                        num_coupling_layers=args.num_coupling_layers,
+                        num_conv_layers=args.num_conv_layers,
+                        lig_max_radius=args.max_radius,
+                        ns=args.ns, nv=args.nv,
+                        distance_embed_dim=args.distance_embed_dim,
+                        cross_distance_embed_dim=args.cross_distance_embed_dim,
+                        batch_norm=not args.no_batch_norm,
+                        dropout=args.dropout,
+                        use_second_order_repr=args.use_second_order_repr,
+                        cross_max_distance=args.cross_max_distance,
+                        dynamic_max_cross=args.dynamic_max_cross,
+                        lm_embedding_type=lm_embedding_type)
+
+    if device.type == 'cuda' and not no_parallel:
+        model = DataParallel(model)
+    model.to(device)
+    return model
 
 
 def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_loader, run_dir):
@@ -29,23 +183,13 @@ def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_load
             print("Run name: ", args.run_name)
         logs = {}
         train_losses = train_epoch(
-            model, train_loader, optimizer, device, ema_weights)
+            model, train_loader, optimizer, device)
         print("Epoch {}: Training loss {:.4f}"
               .format(epoch, train_losses['loss']))
 
-        ema_weights.store(model.parameters())
-        if args.use_ema:
-            # load ema parameters into model for running validation and inference
-            ema_weights.copy_to(model.parameters())
         val_losses = test_epoch(model, val_loader)
         print("Epoch {}: Validation loss {:.4f}"
               .format(epoch, val_losses['loss']))
-
-        if not args.use_ema:
-            ema_weights.copy_to(model.parameters())
-        ema_state_dict = copy.deepcopy(model.module.state_dict(
-        ) if device.type == 'cuda' else model.state_dict())
-        ema_weights.restore(model.parameters())
 
         if args.wandb:
             logs.update({'train_' + k: v for k, v in train_losses.items()})
@@ -58,8 +202,6 @@ def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_load
             best_val_loss = val_losses['loss']
             best_epoch = epoch
             torch.save(state_dict, os.path.join(run_dir, 'best_model.pt'))
-            torch.save(ema_state_dict, os.path.join(
-                run_dir, 'best_ema_model.pt'))
 
         if scheduler:
             if args.val_inference_freq is not None:
@@ -71,7 +213,6 @@ def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_load
             'epoch': epoch,
             'model': state_dict,
             'optimizer': optimizer.state_dict(),
-            'ema_weights': ema_weights.state_dict(),
         }, os.path.join(run_dir, 'last_model.pt'))
 
     print("Best Validation Loss {} on Epoch {}".format(best_val_loss, best_epoch))
@@ -100,14 +241,12 @@ def main_function():
         torch.backends.cudnn.benchmark = True
 
     # construct loader
-    train_loader, val_loader = construct_loader(args)
+    train_loader, val_loader = FrameDataset.construct_loader(args)
 
     model = get_model(args, device)
     optimizer, scheduler = get_optimizer_and_scheduler(
         args, model, scheduler_mode=args.inference_earlystop_goal if args.val_inference_freq is not None else 'min')
-    ema_weights = ExponentialMovingAverage(
-        model.parameters(), decay=args.ema_rate)
-
+    
     if args.restart_dir:
         try:
             dict = torch.load(f'{args.restart_dir}/last_model.pt',
@@ -116,8 +255,6 @@ def main_function():
                 dict['optimizer']['param_groups'][0]['lr'] = args.restart_lr
             optimizer.load_state_dict(dict['optimizer'])
             model.module.load_state_dict(dict['model'], strict=True)
-            if hasattr(args, 'ema_rate'):
-                ema_weights.load_state_dict(dict['ema_weights'], device=device)
             print("Restarting from epoch", dict['epoch'])
         except Exception as e:
             print("Exception", e)
@@ -145,7 +282,7 @@ def main_function():
     save_yaml_file(yaml_file_name, args.__dict__)
     args.device = device
 
-    train(args, model, optimizer, scheduler, ema_weights,
+    train(args, model, optimizer, scheduler,
           train_loader, val_loader, run_dir)
 
 

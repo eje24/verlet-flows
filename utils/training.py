@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm import tqdm
+from datasets.rigid_frames import VerletFrame
 
 import torch
 
@@ -44,15 +45,14 @@ class AverageMeter():
             return out
 
 
-def train_epoch(model, loader, optimizer, device, ema_weigths):
+def train_epoch(model, loader, optimizer, device):
     model.train()
     meter = AverageMeter(['loss'])
 
-    for data in tqdm(loader, total=len(loader)):
-        if device.type == 'cuda' and len(data) == 1 or device.type == 'cpu' and data.num_graphs == 1:
-            print("Skipping batch of size 1 since otherwise batchnorm would not work.")
+    for (receptor, ligand, v_rot, v_tr) in tqdm(loader, total=len(loader)):
         optimizer.zero_grad()
         try:
+            data = VerletFrame(receptor, ligand, v_rot, v_tr)
             log_pxv = model(data)
             loss = -torch.mean(log_pxv)
             loss.backward()
@@ -86,7 +86,7 @@ def test_epoch(model, loader):
     for data in tqdm(loader, total=len(loader)):
         try:
             with torch.no_grad():
-                log_pxv = model(data)
+                log_pxv = model(VerletFrame(*data))
             loss = -torch.mean(log_pxv)
             meter.add([loss.cpu().detach()])
 

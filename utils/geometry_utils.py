@@ -188,14 +188,13 @@ def axis_angle_to_matrix(axis_angle) -> torch.Tensor:
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
-
 def apply_update(data: HeteroData, rot_update: torch.Tensor, tr_update: torch.Tensor) -> HeteroData:
     """
     @param update
-    @param rot_update, 3 x 3
+    @param rot_update, batch x 3 x 3
     @param tr_update, 3
     @returns x, updated
     """
-    lig_center = torch.mean(data['ligand'].pos, dim=0, keepdim=True)
-    data['ligand'].pos = (data['ligand'].pos - lig_center) @ rot_update.T + lig_center + tr_update
+    lig_center = torch.mean(data.ligand, dim=1, keepdim=True)
+    data.ligand = (data.ligand - lig_center) @ rot_update + tr_update + lig_center
     return data

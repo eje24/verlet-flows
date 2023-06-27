@@ -12,7 +12,7 @@ class TensorProductConvLayer(torch.nn.Module):
             hidden_features = n_edge_features
 
         self.tp = tp = o3.FullyConnectedTensorProduct(
-            in_irreps, sh_irreps, out_irreps, shared_weights=False)
+           in_irreps, sh_irreps, out_irreps, shared_weights=False)
 
         self.fc = nn.Sequential(
             nn.Linear(n_edge_features, hidden_features),

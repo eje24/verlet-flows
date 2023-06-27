@@ -10,4 +10,4 @@ def log_uniform_density_so3():
 
 
 def log_gaussian_density_r3(x: torch.Tensor):
-    return -0.5 * x @ x.T - 0.5 * torch.log(torch.tensor(2 * math.pi))
+    return -0.5 * torch.sum(x * x, axis=-1) - 0.5 * torch.log(torch.tensor(2 * math.pi))

@@ -24,8 +24,6 @@ from utils.utils import read_strings_from_txt
 
 class InitializeVelocity(BaseTransform):
     def __call__(self, data):
-        if not torch.is_tensor(data['ligand'].pos):
-            data['ligand'].pos = random.choice(data['ligand'].pos)
         data.v_rot = torch.rand(1, 3)
         data.v_tr = torch.rand(1, 3)
         return data
