@@ -11,7 +11,7 @@ class FrameDockingVerletFlow(nn.Module):
     """
     SE3 Verlet flow for frame docking
     """
-    def __init__(self, device, num_coupling_layers=5, **kwargs):
+    def __init__(self, num_coupling_layers=5, **kwargs):
         super().__init__()
         self.num_coupling_layers = num_coupling_layers
         self.coupling_layers = nn.ModuleList(
@@ -122,7 +122,7 @@ class FrameDockingVerletFlow(nn.Module):
         """
         return self._data_to_latent(data)
     
-    def forward(self, data: Batch):
+    def forward(self, data):
         _, log_pxv, _ = self.data_to_latent(data)
         return log_pxv
     

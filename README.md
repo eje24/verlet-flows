@@ -2,8 +2,11 @@
 
 Notes:
 - differentiating through axis-angle to rotation conversion
-- what's the difference between preceprocessing and inference_proprocessing
+- what's the difference between preceprocessing and inference proprocessing
 
 Todos:
-- add in inference epochs (but need to think more about how this should be done: rmsd?)
-- finish randomize position + sampling stuff
+- finish debugging training + coupling layers
+- further prune train.py, getting rid of unncessary arguments
+- redesign ScoreModel (horrendous right now, but doesn't need to be super complex)
+- check invertibility of flow layers + right script to check?
+

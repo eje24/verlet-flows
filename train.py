@@ -140,13 +140,10 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode='min'):
     return optimizer, scheduler
 
 
-def get_model(args, device, no_parallel=False):
+def get_model(args, device):
     model_class = FrameDockingVerletFlow
-    model = model_class(device=device,
-                        num_coupling_layers=args.num_coupling_layers,
+    model = model_class(num_coupling_layers=args.num_coupling_layers,
                         num_conv_layers=args.num_conv_layers,
-                        lig_max_radius=args.max_radius,
-                        ns=args.ns, nv=args.nv,
                         distance_embed_dim=args.distance_embed_dim,
                         dropout=args.dropout,
                         )
@@ -154,9 +151,9 @@ def get_model(args, device, no_parallel=False):
     return model
 
 
-def train(args, model, optimizer, scheduler, ema_weights, train_loader, val_loader, run_dir):
+def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
     best_val_loss = math.inf
-    best_val_inference_value = math.inf if args.inference_earlystop_goal == 'min' else 0
+    best_val_inference_value = math.inf 
     best_epoch = 0
     best_val_inference_epoch = 0
 
@@ -215,20 +212,16 @@ def main_function():
             else:
                 arg_dict[key] = value
         args.config = args.config.name
-    assert (args.inference_earlystop_goal ==
-            'max' or args.inference_earlystop_goal == 'min')
-    if args.val_inference_freq is not None and args.scheduler is not None:
-        # otherwise we will just stop training after args.scheduler_patience epochs
-        assert (args.scheduler_patience > args.val_inference_freq)
+
     if args.cudnn_benchmark:
         torch.backends.cudnn.benchmark = True
 
     # construct loader
-    train_loader, val_loader = FrameDataset.construct_loader(args)
+    train_loader, val_loader = FrameDataset.construct_loaders(args)
 
     model = get_model(args, device)
     optimizer, scheduler = get_optimizer_and_scheduler(
-        args, model, scheduler_mode=args.inference_earlystop_goal if args.val_inference_freq is not None else 'min')
+        args, model, scheduler_mode = 'min')
     
     if args.restart_dir:
         try:

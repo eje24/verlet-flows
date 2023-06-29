@@ -11,6 +11,8 @@ class FrameDockingScoreModel(torch.nn.Module):
     0 - 2           0 - 2
     |               |
     3               3
+    
+    Notes: Needs work!
     """
     def __init__(self, distance_embed_dim = 4, max_cross_offset = 5):
         super().__init__()
@@ -28,7 +30,7 @@ class FrameDockingScoreModel(torch.nn.Module):
         Returns:
             s_rot, s_tr, t_rot, t_tr: scores
         """
-        # cross vectors
+        # cross vector
         edge_vec = data['ligand'].pos - data['receptor'].pos
         
         # distance
@@ -52,7 +54,6 @@ class FrameDockingScoreModel(torch.nn.Module):
         # compute features tensor features tensor features
         output = self.tp1(edge_features1, edge_features2)
         output = self.tp2(output, edge_features3)
-        
         # return scores
         s_rot, s_tr = output[:,:3], output[:,3:6]
         t_rot, t_tr = output[6:9], output[9:12]
