@@ -96,7 +96,7 @@ class FrameDockingVerletFlow(nn.Module):
             latent poses of ligand/protein structures passed in, and
             log densities of latent poses
         """
-        log_pxv = torch.zeros(data.shape[0], device = data.ligand.device)
+        log_pxv = torch.zeros(data.ligand.shape[0], device = data.ligand.device)
         for coupling_layer in reversed(self.coupling_layers):
             data, delta_log_pxv = coupling_layer(
                 data, reverse=True)
@@ -163,11 +163,11 @@ class FrameDockingCouplingLayer(nn.Module):
     """
     SE3 Verlet coupling layer for docking
     """
-    def __init__(self, **kwargs):
+    def __init__(self, device, **kwargs):
         super().__init__()
         self.st_net = FrameDockingScoreModel(**kwargs)
         # constrain timestep to be >0
-        self.log_timestep = nn.Parameter()
+        self.log_timestep = nn.Parameter(torch.tensor(0.0, device = device))
 
     def forward(self, data: VerletFrame, reverse:bool=False):
         """
@@ -184,9 +184,9 @@ class FrameDockingCouplingLayer(nn.Module):
         if not reverse:
             # forward coupling step
             s_rot, s_tr, t_rot, t_tr = self.st_net(data)
-            t_rot, t_tr = self.t_net(data)
             data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
             data.v_tr = data.v_tr * torch.exp(s_tr) + t_tr
+            print(f'Devices: timestep is {timestep.device}, data.v_rot is {data.v_rot.device}')
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
             v_rot_matrix = axis_angle_to_matrix(update_rot)
@@ -195,12 +195,12 @@ class FrameDockingCouplingLayer(nn.Module):
             return data, delta_pxv
         else:
             # backward coupling step
+            print(f'Devices: timestep is {timestep.device}, data.v_rot is {data.v_rot.device}')
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
             negative_v_rot_matrix = axis_angle_to_matrix(-update_rot)
             apply_update(data, negative_v_rot_matrix, -data.v_tr)
-            s_rot, s_tr = self.s_net(data)
-            t_rot, t_tr = self.t_net(data)
+            s_rot, s_tr, t_rot, t_tr = self.st_net(data)
             data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
             data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)

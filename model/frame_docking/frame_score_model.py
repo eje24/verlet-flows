@@ -16,12 +16,12 @@ class FrameDockingScoreModel(torch.nn.Module):
     """
     def __init__(self, distance_embed_dim = 4, max_cross_offset = 5):
         super().__init__()
-        self.distance_embed_dim = 5
-        self.offset_distance_embedding = GaussianSmearing(
+        self._distance_embed_dim = 5
+        self._offset_distance_embedding = GaussianSmearing(
             0.0, max_cross_offset, distance_embed_dim)
         
-        self.tp1 = o3.FullyConnectedTensorProduct(irreps_in1 = f'{self.distance_embed_dim}x0e + 1e', irreps_in2 = f'{distance_embed_dim}x0e + 1e', irreps_out = '20x0e + 5x1e', internal_weights = True)
-        self.tp2 = o3.FullyConnectedTensorProduct(irreps_in1 = tp1.irreps_out, irreps_in2 = f'{self.distance_embed_dim}x0e + 1e', irreps_out = '9x0e + 1x1e', internal_weights = True)
+        self._tp1 = o3.FullyConnectedTensorProduct(irreps_in1 = f'{self._distance_embed_dim}x0e + 1e', irreps_in2 = f'{distance_embed_dim}x0e + 1e', irreps_out = '20x0e + 5x1e', internal_weights = True)
+        self._tp2 = o3.FullyConnectedTensorProduct(irreps_in1 = self._tp1.irreps_out, irreps_in2 = f'{self._distance_embed_dim}x0e + 1e', irreps_out = '9x0e + 1x1e', internal_weights = True)
                   
     def forward(self, data):
         """
@@ -30,31 +30,26 @@ class FrameDockingScoreModel(torch.nn.Module):
         Returns:
             s_rot, s_tr, t_rot, t_tr: scores
         """
-        # cross vector
-        edge_vec = data['ligand'].pos - data['receptor'].pos
+        # cross vector - shape batch x 4 x 3
+        edge_vec = data.ligand - data.receptor
         
-        # distance
+        # distances - shape batch x 4 x 1
         distances = torch.sqrt(torch.sum(torch.square(edge_vec[:,1:4]), axis = -1, keepdims=True))
-        offset_distance_embedding = self.offset_distance_embedding(offset)
+        # distance_embeddings - shape batch x 4 x self._distance_embed_dim
+        distance_embeddings = self._offset_distance_embedding(distances)
         
         # normalize edge features
-        edge_vec = edge_vec / distances
-        
-        # masks
-        num_edges = edge_vec.shape[0]
-        edge_mask1 = [idx for idx in range(num_edges) if idx % 4 == 1]
-        edge_mask2 = [idx for idx in range(num_edges) if idx % 4 == 2]
-        edge_mask3 = [idx for idx in range(num_edges) if idx % 4 == 3]
-        
-        # construct {self.distance_embed_dim}x0e + 1e features
-        edge_features1 = edge_vec[edge_mask1]
-        edge_features2 = edge_vec[edge_mask2]
-        edge_features3 = edge_vec[edge_mask3]
+        edge_vec = edge_vec / distances 
+
+        # construct {self._distance_embed_dim}x0e + 1e features
+        edge_features1 = torch.cat([distance_embeddings[:,1], edge_vec[:, 1]], axis=-1)
+        edge_features2 = torch.cat([distance_embeddings[:,2], edge_vec[:, 2]], axis=-1)
+        edge_features3 = torch.cat([distance_embeddings[:,3], edge_vec[:, 3]], axis=-1)
         
         # compute features tensor features tensor features
-        output = self.tp1(edge_features1, edge_features2)
-        output = self.tp2(output, edge_features3)
-        # return scores
+        output = self._tp1(edge_features1, edge_features2)
+        output = self._tp2(output, edge_features3)
+        # return scores - importantly, only t_tr is equivariant
         s_rot, s_tr = output[:,:3], output[:,3:6]
-        t_rot, t_tr = output[6:9], output[9:12]
+        t_rot, t_tr = output[:, 6:9], output[:, 9:12]
         return s_rot, s_tr, t_rot, t_tr

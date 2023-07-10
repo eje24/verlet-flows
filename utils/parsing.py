@@ -1,5 +1,11 @@
 # from https://github.com/gcorso/DiffDock/blob/main/utils/parsing.py
-from argparse import ArgumentParser,FileType
+from argparse import Namespace, ArgumentParser,FileType
+
+def display_args(args: Namespace):
+    print('Starting training run with the following arguments:')
+    for arg_name in vars(args):
+        arg_value = getattr(args, arg_name)
+        print(f"{arg_name}: {arg_value}")
 
 def parse_train_args(manual_args = None):
 
@@ -41,6 +47,7 @@ def parse_train_args(manual_args = None):
     parser.add_argument('--ns', type=int, default=16, help='Number of hidden features per node of order 0')
     parser.add_argument('--nv', type=int, default=4, help='Number of hidden features per node of order >0')
     parser.add_argument('--dropout', type=float, default=0.0, help='MLP dropout')
+    parser.add_argument('--distance_embed_dim', type=int, default=6, help='Dimension of distance embedding.')
 
     args = parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
     return args

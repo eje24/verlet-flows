@@ -2,12 +2,13 @@ import yaml
 import resource
 import math
 import os
+from tqdm import tqdm
 
 import wandb
 import torch
 torch.multiprocessing.set_sharing_strategy('file_system')
 
-from utils.parsing import parse_train_args
+from utils.parsing import display_args, parse_train_args
 from datasets.frame_dataset import FrameDataset, VerletFrame
 from model.frame_docking.frame_docking_flow import FrameDockingVerletFlow 
 
@@ -143,9 +144,8 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode='min'):
 def get_model(args, device):
     model_class = FrameDockingVerletFlow
     model = model_class(num_coupling_layers=args.num_coupling_layers,
-                        num_conv_layers=args.num_conv_layers,
                         distance_embed_dim=args.distance_embed_dim,
-                        dropout=args.dropout,
+                        device = device,
                         )
     model.to(device)
     return model
@@ -199,9 +199,9 @@ def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
     print("Best inference metric {} on Epoch {}".format(
         best_val_inference_value, best_val_inference_epoch))
 
-
 def main_function():
     args = parse_train_args()
+    display_args(args)
     if args.config:
         config_dict = yaml.load(args.config, Loader=yaml.FullLoader)
         arg_dict = args.__dict__
@@ -217,7 +217,7 @@ def main_function():
         torch.backends.cudnn.benchmark = True
 
     # construct loader
-    train_loader, val_loader = FrameDataset.construct_loaders(args)
+    train_loader, val_loader = FrameDataset.construct_loaders(args, device)
 
     model = get_model(args, device)
     optimizer, scheduler = get_optimizer_and_scheduler(

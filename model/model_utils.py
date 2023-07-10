@@ -47,6 +47,11 @@ class GaussianSmearing(torch.nn.Module):
         self.coeff = -0.5 / (offset[1] - offset[0]).item() ** 2
         self.register_buffer('offset', offset)
 
-    def forward(self, dist):
-        dist = dist.view(-1, 1) - self.offset.view(1, -1)
-        return torch.exp(self.coeff * torch.pow(dist, 2))
+    def forward(self, dist, batched = False):
+        new_dist = dist.view(-1, 1) - self.offset.view(1, -1)
+        smeared_dist = torch.exp(self.coeff * torch.pow(new_dist, 2))
+        if batched:
+            return smeared_dist.view(*dist.shape[:-1], -1)
+        else:
+            return smeared_dist
+
