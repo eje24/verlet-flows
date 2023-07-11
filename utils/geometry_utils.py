@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import HeteroData
+from datasets.frame_dataset import VerletFrame
 
 def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     """
@@ -188,13 +188,14 @@ def axis_angle_to_matrix(axis_angle) -> torch.Tensor:
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
-def apply_update(data: HeteroData, rot_update: torch.Tensor, tr_update: torch.Tensor) -> HeteroData:
+def apply_update(data: VerletFrame, rot_update: torch.Tensor, tr_update: torch.Tensor):
     """
     @param update
     @param rot_update, batch x 3 x 3
     @param tr_update, 3
     @returns x, updated
     """
-    lig_center = torch.mean(data.ligand, dim=1, keepdim=True)
+    # lig_center has shape batch_size x 1 x 3
+    lig_center = torch.mean(data.ligand, dim=-2, keepdim=True)
     data.ligand = (data.ligand - lig_center) @ rot_update + tr_update + lig_center
     return data

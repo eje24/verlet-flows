@@ -1,11 +1,14 @@
 # from https://github.com/gcorso/DiffDock/blob/main/utils/parsing.py
+import logging
 from argparse import Namespace, ArgumentParser,FileType
 
+logger = logging.getLogger(__name__)
+
 def display_args(args: Namespace):
-    print('Starting training run with the following arguments:')
+    logger.info('Starting training run with the following arguments:')
     for arg_name in vars(args):
         arg_value = getattr(args, arg_name)
-        print(f"{arg_name}: {arg_value}")
+        logger.info(f"{arg_name}: {arg_value}")
 
 def parse_train_args(manual_args = None):
 
