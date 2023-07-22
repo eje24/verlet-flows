@@ -9,7 +9,7 @@ from rdkit import Geometry
 import networkx as nx
 from scipy.optimize import differential_evolution
 
-RDLogger.DisableLog('rdApp.*')
+RDLogger.DisableLog("rdApp.*")
 
 """
     Conformer matching routines from Torsional Diffusion
@@ -17,36 +17,58 @@ RDLogger.DisableLog('rdApp.*')
 
 
 def GetDihedral(conf, atom_idx):
-    return rdMolTransforms.GetDihedralRad(conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3])
+    return rdMolTransforms.GetDihedralRad(
+        conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3]
+    )
 
 
 def SetDihedral(conf, atom_idx, new_vale):
     rdMolTransforms.SetDihedralRad(
-        conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3], new_vale)
+        conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3], new_vale
+    )
 
 
 def apply_changes(mol, values, rotable_bonds, conf_id):
     opt_mol = copy.copy(mol)
-    [SetDihedral(opt_mol.GetConformer(conf_id), rotable_bonds[r], values[r])
-     for r in range(len(rotable_bonds))]
+    [
+        SetDihedral(opt_mol.GetConformer(conf_id), rotable_bonds[r], values[r])
+        for r in range(len(rotable_bonds))
+    ]
     return opt_mol
 
 
-def optimize_rotatable_bonds(mol, true_mol, rotable_bonds, probe_id=-1, ref_id=-1, seed=0, popsize=15, maxiter=500,
-                             mutation=(0.5, 1), recombination=0.8):
-    opt = OptimizeConformer(mol, true_mol, rotable_bonds,
-                            seed=seed, probe_id=probe_id, ref_id=ref_id)
+def optimize_rotatable_bonds(
+    mol,
+    true_mol,
+    rotable_bonds,
+    probe_id=-1,
+    ref_id=-1,
+    seed=0,
+    popsize=15,
+    maxiter=500,
+    mutation=(0.5, 1),
+    recombination=0.8,
+):
+    opt = OptimizeConformer(
+        mol, true_mol, rotable_bonds, seed=seed, probe_id=probe_id, ref_id=ref_id
+    )
     max_bound = [np.pi] * len(opt.rotable_bonds)
     min_bound = [-np.pi] * len(opt.rotable_bonds)
     bounds = (min_bound, max_bound)
     bounds = list(zip(bounds[0], bounds[1]))
 
     # Optimize conformations
-    result = differential_evolution(opt.score_conformation, bounds,
-                                    maxiter=maxiter, popsize=popsize,
-                                    mutation=mutation, recombination=recombination, disp=False, seed=seed)
-    opt_mol = apply_changes(
-        opt.mol, result['x'], opt.rotable_bonds, conf_id=probe_id)
+    result = differential_evolution(
+        opt.score_conformation,
+        bounds,
+        maxiter=maxiter,
+        popsize=popsize,
+        mutation=mutation,
+        recombination=recombination,
+        disp=False,
+        seed=seed,
+    )
+    opt_mol = apply_changes(opt.mol, result["x"], opt.rotable_bonds, conf_id=probe_id)
 
     return opt_mol
 
@@ -87,19 +109,17 @@ def get_torsion_angles(mol):
             continue
         n0 = list(G2.neighbors(e[0]))
         n1 = list(G2.neighbors(e[1]))
-        torsions_list.append(
-            (n0[0], e[0], e[1], n1[0])
-        )
+        torsions_list.append((n0[0], e[0], e[1], n1[0]))
     return torsions_list
 
 
 # GeoMol
 def get_torsions(mol_list):
-    print('USING GEOMOL GET TORSIONS FUNCTION')
+    print("USING GEOMOL GET TORSIONS FUNCTION")
     atom_counter = 0
     torsionList = []
     for m in mol_list:
-        torsionSmarts = '[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]'
+        torsionSmarts = "[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]"
         torsionQuery = Chem.MolFromSmarts(torsionSmarts)
         matches = m.GetSubstructMatches(torsionQuery)
         for match in matches:
@@ -109,24 +129,35 @@ def get_torsions(mol_list):
             jAtom = m.GetAtomWithIdx(idx2)
             kAtom = m.GetAtomWithIdx(idx3)
             for b1 in jAtom.GetBonds():
-                if (b1.GetIdx() == bond.GetIdx()):
+                if b1.GetIdx() == bond.GetIdx():
                     continue
                 idx1 = b1.GetOtherAtomIdx(idx2)
                 for b2 in kAtom.GetBonds():
-                    if ((b2.GetIdx() == bond.GetIdx())
-                            or (b2.GetIdx() == b1.GetIdx())):
+                    if (b2.GetIdx() == bond.GetIdx()) or (b2.GetIdx() == b1.GetIdx()):
                         continue
                     idx4 = b2.GetOtherAtomIdx(idx3)
                     # skip 3-membered rings
-                    if (idx4 == idx1):
+                    if idx4 == idx1:
                         continue
                     if m.GetAtomWithIdx(idx4).IsInRing():
                         torsionList.append(
-                            (idx4 + atom_counter, idx3 + atom_counter, idx2 + atom_counter, idx1 + atom_counter))
+                            (
+                                idx4 + atom_counter,
+                                idx3 + atom_counter,
+                                idx2 + atom_counter,
+                                idx1 + atom_counter,
+                            )
+                        )
                         break
                     else:
                         torsionList.append(
-                            (idx1 + atom_counter, idx2 + atom_counter, idx3 + atom_counter, idx4 + atom_counter))
+                            (
+                                idx1 + atom_counter,
+                                idx2 + atom_counter,
+                                idx3 + atom_counter,
+                                idx4 + atom_counter,
+                            )
+                        )
                         break
                 break
 
@@ -135,7 +166,10 @@ def get_torsions(mol_list):
 
 
 def A_transpose_matrix(alpha):
-    return np.array([[np.cos(alpha), np.sin(alpha)], [-np.sin(alpha), np.cos(alpha)]], dtype=np.double)
+    return np.array(
+        [[np.cos(alpha), np.sin(alpha)], [-np.sin(alpha), np.cos(alpha)]],
+        dtype=np.double,
+    )
 
 
 def S_vec(alpha):
@@ -146,10 +180,9 @@ def GetDihedralFromPointCloud(Z, atom_idx):
     p = Z[list(atom_idx)]
     b = p[:-1] - p[1:]
     b[0] *= -1
-    v = np.array([v - (v.dot(b[1]) / b[1].dot(b[1])) * b[1]
-                  for v in [b[0], b[2]]])
+    v = np.array([v - (v.dot(b[1]) / b[1].dot(b[1])) * b[1] for v in [b[0], b[2]]])
     # Normalize vectors
-    v /= np.sqrt(np.einsum('...i,...i', v, v)).reshape(-1, 1)
+    v /= np.sqrt(np.einsum("...i,...i", v, v)).reshape(-1, 1)
     b1 = b[1] / np.linalg.norm(b[1])
     x = np.dot(v[0], v[1])
     m = np.cross(v[0], b1)
@@ -176,8 +209,9 @@ def get_dihedral_vonMises(mol, conf, atom_idx, Z):
                 continue
             assert k != l
             s_star = S_vec(GetDihedralFromPointCloud(Z, (k, i, j, l)))
-            a_mat = A_transpose_matrix(GetDihedral(
-                conf, (k, i, j, k_0)) + GetDihedral(conf, (l_0, i, j, l)))
+            a_mat = A_transpose_matrix(
+                GetDihedral(conf, (k, i, j, k_0)) + GetDihedral(conf, (l_0, i, j, l))
+            )
             v = v + np.matmul(a_mat, s_star)
     v = v / np.linalg.norm(v)
     v = v.reshape(-1)
@@ -187,22 +221,23 @@ def get_dihedral_vonMises(mol, conf, atom_idx, Z):
 def get_von_mises_rms(mol, mol_rdkit, rotable_bonds, conf_id):
     new_dihedrals = np.zeros(len(rotable_bonds))
     for idx, r in enumerate(rotable_bonds):
-        new_dihedrals[idx] = get_dihedral_vonMises(mol_rdkit,
-                                                   mol_rdkit.GetConformer(
-                                                       conf_id), r,
-                                                   mol.GetConformer().GetPositions())
+        new_dihedrals[idx] = get_dihedral_vonMises(
+            mol_rdkit,
+            mol_rdkit.GetConformer(conf_id),
+            r,
+            mol.GetConformer().GetPositions(),
+        )
     mol_rdkit = apply_changes(mol_rdkit, new_dihedrals, rotable_bonds, conf_id)
     return RMSD(mol_rdkit, mol, conf_id)
 
 
 def mmff_func(mol):
     mol_mmff = copy.deepcopy(mol)
-    AllChem.MMFFOptimizeMoleculeConfs(mol_mmff, mmffVariant='MMFF94s')
+    AllChem.MMFFOptimizeMoleculeConfs(mol_mmff, mmffVariant="MMFF94s")
     for i in range(mol.GetNumConformers()):
         coords = mol_mmff.GetConformers()[i].GetPositions()
         for j in range(coords.shape[0]):
-            mol.GetConformer(i).SetAtomPosition(j,
-                                                Geometry.Point3D(*coords[j]))
+            mol.GetConformer(i).SetAtomPosition(j, Geometry.Point3D(*coords[j]))
 
 
 RMSD = AllChem.AlignMol

@@ -1,6 +1,7 @@
 import torch
 from datasets.frame_dataset import VerletFrame
 
+
 def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as rotation matrices to quaternions.
@@ -62,6 +63,7 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
         F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
     ].reshape(batch_dim + (4,))
 
+
 def quaternion_to_matrix(quaternions):
     """
     From https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/transforms/rotation_conversions.html
@@ -92,6 +94,7 @@ def quaternion_to_matrix(quaternions):
         -1,
     )
     return o.reshape(quaternions.shape[:-1] + (3, 3))
+
 
 def quaternion_to_axis_angle(quaternions: torch.Tensor) -> torch.Tensor:
     """
@@ -156,6 +159,7 @@ def axis_angle_to_quaternion(axis_angle):
     )
     return quaternions
 
+
 def matrix_to_axis_angle(matrix: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as rotation matrices to axis/angle.
@@ -188,6 +192,7 @@ def axis_angle_to_matrix(axis_angle) -> torch.Tensor:
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
+
 def apply_update(data: VerletFrame, rot_update: torch.Tensor, tr_update: torch.Tensor):
     """
     @param update
@@ -197,5 +202,8 @@ def apply_update(data: VerletFrame, rot_update: torch.Tensor, tr_update: torch.T
     """
     # lig_center has shape batch_size x 1 x 3
     lig_center = torch.mean(data.ligand, dim=-2, keepdim=True)
+    print(
+        f"data.ligand: {data.ligand.shape}, lig_center: {lig_center.shape}, rot_update: {rot_update.shape}, tr_update: {tr_update.shape}"
+    )
     data.ligand = (data.ligand - lig_center) @ rot_update + tr_update + lig_center
     return data

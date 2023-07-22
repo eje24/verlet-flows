@@ -17,22 +17,26 @@ from spyrmsd import rmsd, molecule
 
 
 def get_obrmsd(mol1_path, mol2_path, cache_name=None):
-    cache_name = datetime.now().strftime(
-        'date%d-%m_time%H-%M-%S.%f') if cache_name is None else cache_name
+    cache_name = (
+        datetime.now().strftime("date%d-%m_time%H-%M-%S.%f")
+        if cache_name is None
+        else cache_name
+    )
     os.makedirs(".openbabel_cache", exist_ok=True)
     if not isinstance(mol1_path, str):
-        MolToPDBFile(mol1_path, '.openbabel_cache/obrmsd_mol1_cache.pdb')
-        mol1_path = '.openbabel_cache/obrmsd_mol1_cache.pdb'
+        MolToPDBFile(mol1_path, ".openbabel_cache/obrmsd_mol1_cache.pdb")
+        mol1_path = ".openbabel_cache/obrmsd_mol1_cache.pdb"
     if not isinstance(mol2_path, str):
-        MolToPDBFile(mol2_path, '.openbabel_cache/obrmsd_mol2_cache.pdb')
-        mol2_path = '.openbabel_cache/obrmsd_mol2_cache.pdb'
+        MolToPDBFile(mol2_path, ".openbabel_cache/obrmsd_mol2_cache.pdb")
+        mol2_path = ".openbabel_cache/obrmsd_mol2_cache.pdb"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return_code = subprocess.run(f"obrms {mol1_path} {mol2_path} > .openbabel_cache/obrmsd_{cache_name}.rmsd",
-                                     shell=True)
+        return_code = subprocess.run(
+            f"obrms {mol1_path} {mol2_path} > .openbabel_cache/obrmsd_{cache_name}.rmsd",
+            shell=True,
+        )
         print(return_code)
-    obrms_output = read_strings_from_txt(
-        f".openbabel_cache/obrmsd_{cache_name}.rmsd")
+    obrms_output = read_strings_from_txt(f".openbabel_cache/obrmsd_{cache_name}.rmsd")
     rmsds = [line.split(" ")[-1] for line in obrms_output]
     return np.array(rmsds, dtype=np.float)
 
@@ -62,15 +66,14 @@ def read_strings_from_txt(path):
         return [line.rstrip() for line in lines]
 
 
-
-
-
 def get_symmetry_rmsd(mol, coords1, coords2, mol2=None):
     with time_limit(10):
         mol = molecule.Molecule.from_rdkit(mol)
         mol2 = molecule.Molecule.from_rdkit(mol2) if mol2 is not None else mol2
         mol2_atomicnums = mol2.atomicnums if mol2 is not None else mol.atomicnums
-        mol2_adjacency_matrix = mol2.adjacency_matrix if mol2 is not None else mol.adjacency_matrix
+        mol2_adjacency_matrix = (
+            mol2.adjacency_matrix if mol2 is not None else mol.adjacency_matrix
+        )
         RMSD = rmsd.symmrmsd(
             coords1,
             coords2,
