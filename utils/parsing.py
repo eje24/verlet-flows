@@ -12,7 +12,7 @@ def display_args(args: Namespace):
         logging.info(f"{arg_name}: {arg_value}")
 
 
-def parse_train_args(manual_args=None):
+def parse_args(manual_args=None):
     # General arguments
     parser = ArgumentParser()
     parser.add_argument("--config", type=FileType(mode="r"), default=None)

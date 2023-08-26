@@ -1,0 +1,10 @@
+Frame Docking:
+- interpretability
+
+Todos:
+(1) fining latent to data direction
+(2) support checkpoints
+
+Should be able to:
+- Sample starting point, generate animation of where it ends up
+

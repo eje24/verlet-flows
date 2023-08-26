@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 import torch
 from torch.utils.data import Dataset, DataLoader
-from scipy.spatial.transform import Rotation as R
+
+from utils.distributions import uniform_so3_random
 
 VerletFrame = namedtuple("VerletFrame", ["receptor", "ligand", "v_rot", "v_tr"])
 
@@ -15,6 +16,30 @@ class VerletFrame:
     ligand: torch.Tensor
     v_rot: torch.Tensor
     v_tr: torch.Tensor
+
+    def tensor_op(self, tensor_op):
+        def get_attr_op_from_key(key):
+            attr = getattr(self, key)
+            attr_op = getattr(attr, tensor_op)
+            return attr_op
+
+        post_op_attrs = {
+            key: get_attr_op_from_key(key)() for key in self.__dict__.keys()
+        }
+
+        return VerletFrame(**post_op_attrs)
+
+    @property
+    def ligand_center(self):
+        return torch.mean(self.ligand, axis=-2)
+
+    @property
+    def receptor_center(self):
+        return torch.mean(self.receptor, axis=-2)
+
+    @property
+    def num_frames(self):
+        return self.receptor.size[0]
 
 
 class FrameDataset(Dataset):
@@ -42,11 +67,9 @@ class FrameDataset(Dataset):
         return self.num_items
 
     def __getitem__(self, idx: int):
-        v_rot = torch.rand(1, 3, device=self.device)
-        v_tr = torch.rand(1, 3, device=self.device)
-        random_rotation = (
-            torch.from_numpy(R.random().as_matrix()).float().to(self.device)
-        )
+        v_rot = torch.rand(3, device=self.device)
+        v_tr = torch.rand(3, device=self.device)
+        random_rotation = uniform_so3_random(1).squeeze().float().to(self.device)
         return (
             self.receptor @ random_rotation,
             self.ligand @ random_rotation,
@@ -54,7 +77,7 @@ class FrameDataset(Dataset):
             v_tr,
         )
 
-    def construct_loaders(args, device) -> Tuple[DataLoader, DataLoader]:
+    def construct_train_loaders(args, device) -> Tuple[DataLoader, DataLoader]:
         """
         Args:
             num_train: size of training dataset

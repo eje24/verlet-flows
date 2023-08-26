@@ -202,8 +202,10 @@ def apply_update(data: VerletFrame, rot_update: torch.Tensor, tr_update: torch.T
     """
     # lig_center has shape batch_size x 1 x 3
     lig_center = torch.mean(data.ligand, dim=-2, keepdim=True)
-    print(
-        f"data.ligand: {data.ligand.shape}, lig_center: {lig_center.shape}, rot_update: {rot_update.shape}, tr_update: {tr_update.shape}"
+    # print(
+    #     f"data.ligand: {data.ligand.shape}, lig_center: {lig_center.shape}, rot_update: {rot_update.shape}, tr_update: {tr_update.shape}"
+    # )
+    data.ligand = (
+        (data.ligand - lig_center) @ rot_update + tr_update[:, None, :] + lig_center
     )
-    data.ligand = (data.ligand - lig_center) @ rot_update + tr_update + lig_center
     return data

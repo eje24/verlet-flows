@@ -1,7 +1,9 @@
+from enum import Enum
+
 import torch.nn as nn
 import torch
 
-from utils.distributions import log_uniform_density_so3, log_gaussian_density_r3
+from utils.distributions import log_uniform_density_so3, log_gaussian_density
 from utils.geometry_utils import axis_angle_to_matrix, apply_update
 from model.frame_docking.frame_score_model import FrameDockingScoreModel
 from datasets.frame_dataset import VerletFrame
@@ -29,7 +31,7 @@ class FrameDockingVerletFlow(nn.Module):
         Returns:
             log density
         """
-        return log_uniform_density_so3() + log_gaussian_density_r3(noise_tr)
+        return log_uniform_density_so3() + log_gaussian_density(noise_tr)
 
     def log_v_latent_density(self, v_rot: torch.Tensor, v_tr: torch.Tensor):
         """
@@ -42,31 +44,28 @@ class FrameDockingVerletFlow(nn.Module):
         Returns:
             log density
         """
-        return log_gaussian_density_r3(v_rot) + log_gaussian_density_r3(v_tr)
+        return log_gaussian_density(v_rot) + log_gaussian_density(v_tr)
 
-    def _latent_to_data(self, data, log_pxv_initial: torch.Tensor):
+    def _latent_to_data(self, data, latent_log_pxv: torch.Tensor):
         """
         Computes image of data under the flow and log densities
 
         Args:
             data: ligand/protein structure
-            noise_rot: noising rotation to apply to ligand
-            noise_tr: noising translation to apply to ligand
+            latent_log_pxv: latent log density
 
         Returns:
             sampled poses,
             log densities, and
             delta log densities
         """
-        delta_log_pxv = 0
+        flow_log_pxv = 0
         for coupling_layer in self.coupling_layers:
-            data, _delta_log_pxv = coupling_layer(data, reverse=False)
-            delta_log_pxv = delta_log_pxv + _delta_log_pxv
-        return data, log_pxv_initial + delta_log_pxv, delta_log_pxv
+            data, layer_log_pxv = coupling_layer(data, FlowDirection.FORWARD)
+            flow_log_pxv = flow_log_pxv + layer_log_pxv
+        return data, latent_log_pxv + flow_log_pxv, flow_log_pxv
 
-    def latent_to_data(
-        self, data: VerletFrame, noise_rot: torch.Tensor, noise_tr: torch.Tensor
-    ):
+    def latent_to_data(self, data: VerletFrame):
         """
         Wrapper around _latent_to_data,
         computes image of data under the flow and log densities
@@ -81,14 +80,15 @@ class FrameDockingVerletFlow(nn.Module):
             log densities
             delta log densities
         """
-        log_pxv = torch.zeros(data.num_graphs, device=next(self.parameters()).device)
-        protein_center = torch.mean(data.receptor, axis=1)
-        ligand_center = torch.mean(data.ligand, axis=1)
-        apply_update(data, noise_rot, protein_center - ligand_center + noise_tr)
-        log_pxv = self.log_x_latent_density(noise_tr) + self.log_v_latent_density(
+        noise_tr = data.ligand_center - data.receptor_center
+        latent_log_pxv = torch.zeros(
+            data.num_frames, device=next(self.parameters()).device
+        )
+        latent_log_pxv = latent_log_pxv + self.log_x_latent_density(noise_tr)
+        latent_log_pxv = latent_log_pxv + self.log_v_latent_density(
             data.v_rot, data.v_tr
         )
-        return self._latent_to_data(data, log_pxv)
+        return self._latent_to_data(data, latent_log_pxv)
 
     def _data_to_latent(self, data: VerletFrame):
         """
@@ -103,7 +103,7 @@ class FrameDockingVerletFlow(nn.Module):
         """
         log_pxv = torch.zeros(data.ligand.shape[0], device=data.ligand.device)
         for coupling_layer in reversed(self.coupling_layers):
-            data, delta_log_pxv = coupling_layer(data, reverse=True)
+            data, delta_log_pxv = coupling_layer(data, FlowDirection.BACKWARD)
             log_pxv = log_pxv + delta_log_pxv
         delta_log_pxv = log_pxv.detach().clone()
 
@@ -169,6 +169,11 @@ class FrameDockingVerletFlow(nn.Module):
         assert torch.allclose(log_pxv, recreated_log_pxv, rtol=1e-05, atol=1e-05)
 
 
+class FlowDirection(Enum):
+    FORWARD = 0
+    BACKWARD = 1
+
+
 class FrameDockingCouplingLayer(nn.Module):
     """
     SE3 Verlet coupling layer for docking
@@ -180,19 +185,20 @@ class FrameDockingCouplingLayer(nn.Module):
         # constrain timestep to be >0
         self.log_timestep = nn.Parameter(torch.tensor(0.0, device=device))
 
-    def forward(self, data: VerletFrame, reverse: bool = False):
+    def forward(self, data: VerletFrame, flow_direction: FlowDirection):
         """
         Implements a single SE3 Verlet coupling layer
 
         Args:
             data: ligand/protein structures
+            flow_direction: direction of flow (usually forward for inference, backwards for training)
 
         Returns:
             change in log densities
         """
         # compute timestep
         timestep = torch.exp(self.log_timestep)
-        if not reverse:
+        if flow_direction == FlowDirection.FORWARD:
             # forward coupling step
             s_rot, s_tr, t_rot, t_tr = self.st_net(data)
             data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
@@ -206,7 +212,7 @@ class FrameDockingCouplingLayer(nn.Module):
             apply_update(data, v_rot_matrix, update_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
-        else:
+        elif flow_direction == FlowDirection.BACKWARD:
             # backward coupling step
             print(
                 f"Devices: timestep is {timestep.device}, data.v_rot is {data.v_rot.device}"
@@ -241,9 +247,9 @@ class FrameDockingCouplingLayer(nn.Module):
 
         self.eval()
         # go forward
-        data, _ = self.forward(data, reverse=False)
+        data, _ = self.forward(data, FlowDirection.FORWARD)
         # go backwards
-        recreated_data, _ = self.forward(data, reverse=True)
+        recreated_data, _ = self.forward(data, FlowDirection.BACKWARD)
         self.train()
 
         recreated_data_pos = recreated_data.detach().clone()

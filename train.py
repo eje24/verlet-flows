@@ -9,7 +9,7 @@ import torch
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 
-from utils.parsing import display_args, parse_train_args
+from utils.parsing import display_args, parse_args
 from datasets.frame_dataset import FrameDataset, VerletFrame
 from model.frame_docking.frame_docking_flow import FrameDockingVerletFlow
 
@@ -64,7 +64,6 @@ def train_epoch(model, loader, optimizer, device):
         optimizer.zero_grad()
         try:
             data = VerletFrame(receptor, ligand, v_rot, v_tr)
-            print(f"Training data.ligand shape: {data.ligand.shape}")
             log_pxv = model(data)
             loss = -torch.mean(log_pxv)
             loss.backward()
@@ -193,9 +192,7 @@ def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
             logs["current_lr"] = optimizer.param_groups[0]["lr"]
             wandb.log(logs, step=epoch + 1)
 
-        state_dict = (
-            model.module.state_dict() if device.type == "cuda" else model.state_dict()
-        )
+        state_dict = model.state_dict() if device.type == "cuda" else model.state_dict()
         if val_losses["loss"] <= best_val_loss:
             best_val_loss = val_losses["loss"]
             best_epoch = epoch
@@ -225,7 +222,7 @@ def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
 
 
 def main_function():
-    args = parse_train_args()
+    args = parse_args()
     display_args(args)
     if args.config:
         config_dict = yaml.load(args.config, Loader=yaml.FullLoader)
