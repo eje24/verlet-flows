@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from utils.distributions import uniform_so3_random
+from utils.distributions import log_uniform_density_so3, log_gaussian_density
 
 VerletFrame = namedtuple("VerletFrame", ["receptor", "ligand", "v_rot", "v_tr"])
 
@@ -29,6 +30,13 @@ class VerletFrame:
 
         return VerletFrame(**post_op_attrs)
 
+    def copy(self):
+        return self.tensor_op("detach").tensor_op("clone")
+
+    @property
+    def device(self):
+        return self.receptor.device
+
     @property
     def ligand_center(self):
         return torch.mean(self.ligand, axis=-2)
@@ -39,8 +47,59 @@ class VerletFrame:
 
     @property
     def num_frames(self):
-        return self.receptor.size[0]
+        return self.receptor.size()[0]
 
+def gaussian_r3(mean = 0.0, std = 1.0):
+    return torch.normal(mean=torch.tensor([mean, mean, mean]), std = torch.tensor([std, std, std]))
+
+class FramePrior(Dataset):
+    """
+    receptor:       ligand:
+    1               1
+    |               |
+    0 - 2           0 - 2
+    |               |
+    3               3
+    """
+
+    def __init__(self, device, num_items: int = 0, *args, **kwargs):
+        self.num_items = num_items
+        self.receptor = torch.tensor(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            dtype=torch.float,
+            device=device,
+        )
+        self.ligand = torch.tensor(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            dtype=torch.float,
+            device=device,
+        )
+        self.device = device
+        
+    def __len__(self):
+        return self.num_items
+
+    def __getitem__(self, idx: int):
+        v_rot = gaussian_r3().to(self.device)
+        v_tr = gaussian_r3().to(self.device)
+        noise_tr = gaussian_r3().to(self.device)
+        noise_rot = uniform_so3_random(1).squeeze().float().to(self.device)
+        return (
+            self.receptor @ noise_rot,
+            (self.ligand + noise_tr) @ noise_rot,
+            v_rot,
+            v_tr,
+        )
+
+    def get_x_logp(self, data: VerletFrame) -> torch.Tensor:
+        noise_tr = data.receptor_center - data.ligand_center
+        return log_uniform_density_so3() + log_gaussian_density(noise_tr)
+
+    def get_v_logp(self, data: VerletFrame) -> torch.Tensor:
+        return log_gaussian_density(data.v_rot) + log_gaussian_density(data.v_tr)
+
+    def get_logp(self, data: VerletFrame) -> torch.Tensor:
+        return self.get_x_logp(data) + self.get_v_logp(data)
 
 class FrameDataset(Dataset):
     """
@@ -67,8 +126,8 @@ class FrameDataset(Dataset):
         return self.num_items
 
     def __getitem__(self, idx: int):
-        v_rot = torch.rand(3, device=self.device)
-        v_tr = torch.rand(3, device=self.device)
+        v_rot = gaussian_r3().to(self.device)
+        v_tr = gaussian_r3().to(self.device)
         random_rotation = uniform_so3_random(1).squeeze().float().to(self.device)
         return (
             self.receptor @ random_rotation,

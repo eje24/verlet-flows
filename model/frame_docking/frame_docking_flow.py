@@ -1,13 +1,56 @@
 from enum import Enum
+from typing import List, Optional, Tuple
 
 import torch.nn as nn
 import torch
 
-from utils.distributions import log_uniform_density_so3, log_gaussian_density
 from utils.geometry_utils import axis_angle_to_matrix, apply_update
 from model.frame_docking.frame_score_model import FrameDockingScoreModel
-from datasets.frame_dataset import VerletFrame
+from datasets.frame_dataset import VerletFrame, FramePrior
 
+
+class FlowTrajectoryMetadata:
+    """
+    trajectory: sequence of Verlet frames from prior to data distribution
+    flow_logp: the change in log density as a result of the flow, (torch.Tensor, rather than float, because frames are batched)
+    prior_logp: the prior log density (torch.Tensor, rather than float, because frames are batched)
+    """
+    def __init__(self):
+        self.trajectory: List[torch.Tensor] = list()
+        self.flow_logp: Optional[torch.Tensor] = None
+        self.prior_logp: Optional[torch.Tensor] = None
+
+    def total_logp(self) -> Optional[float]:
+        assert self.flow_logp is not None and self.prior_logp is not None
+        return self.flow_logp + self.prior_logp
+    
+class FlowWrapper(nn.Module):
+    def __init__(self, flow: "FrameDockingVerletFlow", prior: FramePrior):
+        super().__init__()
+        self._flow = flow
+        self._prior = prior
+
+    def latent_to_data(self, latent: VerletFrame) -> Tuple[VerletFrame, FlowTrajectoryMetadata]:
+        # get prior density
+        prior_logp = self._prior.get_logp(latent)
+        # run flow
+        data, flow_trajectory = self._flow.latent_to_data(latent)
+        flow_trajectory.prior_logp = prior_logp
+        return data, flow_trajectory
+        
+
+    def data_to_latent(self, data: VerletFrame) -> Tuple[VerletFrame, FlowTrajectoryMetadata]:
+        # run flow backward
+        latent, flow_trajectory = self._flow.data_to_latent(data)
+        # get prior density
+        prior_logp = self._prior.get_logp(data)
+        flow_trajectory.prior_logp = prior_logp
+        return latent, flow_trajectory
+
+    # Training is done in the backwards direction
+    def forward(self, data: VerletFrame) -> torch.Tensor:
+        _, flow_metadata = self.data_to_latent(data)
+        return flow_metadata.total_logp()
 
 class FrameDockingVerletFlow(nn.Module):
     """
@@ -21,117 +64,39 @@ class FrameDockingVerletFlow(nn.Module):
             [FrameDockingCouplingLayer(**kwargs) for _ in range(num_coupling_layers)]
         )
 
-    def log_x_latent_density(self, noise_tr: torch.Tensor):
-        """
-        Density of initial choice of x, as parameterized by noise_rot, noise_tr
-
-        Args:
-            noise_rot: size: 3x3, uniformly random rotation applied to input ligand
-            noise_tr: size: 3, Guassian translation applied to input ligand from protein center of mass
-        Returns:
-            log density
-        """
-        return log_uniform_density_so3() + log_gaussian_density(noise_tr)
-
-    def log_v_latent_density(self, v_rot: torch.Tensor, v_tr: torch.Tensor):
-        """
-        Density of initial choice of v, as parameterized by v_rot, v_tr
-
-        Args:
-            v_rot, torch.Tensor, size: 3, axis-angle representation of rotation
-            v_tr, torch.Tensor, size: 3, translation
-
-        Returns:
-            log density
-        """
-        return log_gaussian_density(v_rot) + log_gaussian_density(v_tr)
-
-    def _latent_to_data(self, data, latent_log_pxv: torch.Tensor):
+    def latent_to_data(self, data: VerletFrame) -> Tuple[VerletFrame, FlowTrajectoryMetadata]:
         """
         Computes image of data under the flow and log densities
-
-        Args:
-            data: ligand/protein structure
-            latent_log_pxv: latent log density
-
-        Returns:
-            sampled poses,
-            log densities, and
-            delta log densities
         """
-        flow_log_pxv = 0
+        flow_logp = torch.zeros(data.num_frames, device=data.device) 
+        # Initialize trajectory and add starting frame
+        flow_metadata = FlowTrajectoryMetadata()
+        flow_metadata.trajectory.append(data.copy())
+        # Run through flow layers
         for coupling_layer in self.coupling_layers:
-            data, layer_log_pxv = coupling_layer(data, FlowDirection.FORWARD)
-            flow_log_pxv = flow_log_pxv + layer_log_pxv
-        return data, latent_log_pxv + flow_log_pxv, flow_log_pxv
+            data, layer_logp = coupling_layer(data, FlowDirection.FORWARD)
+            flow_logp = flow_logp + layer_logp
+            flow_metadata.trajectory.append(data.copy())
+        flow_metadata.flow_logp = flow_logp
+        return data, flow_metadata
 
-    def latent_to_data(self, data: VerletFrame):
-        """
-        Wrapper around _latent_to_data,
-        computes image of data under the flow and log densities
-
-        Args:
-            data: ligand/protein structure
-            noise_rot: noising rotation to apply to ligand
-
-
-        Returns:
-            sampled poses, and
-            log densities
-            delta log densities
-        """
-        noise_tr = data.ligand_center - data.receptor_center
-        latent_log_pxv = torch.zeros(
-            data.num_frames, device=next(self.parameters()).device
-        )
-        latent_log_pxv = latent_log_pxv + self.log_x_latent_density(noise_tr)
-        latent_log_pxv = latent_log_pxv + self.log_v_latent_density(
-            data.v_rot, data.v_tr
-        )
-        return self._latent_to_data(data, latent_log_pxv)
-
-    def _data_to_latent(self, data: VerletFrame):
+    def data_to_latent(self, data: VerletFrame) -> Tuple[VerletFrame, FlowTrajectoryMetadata]:
         """
         Computes the pre-image of data under the flow and the latent log densities
-
-        Args:
-            data: ligand/protein structures
-
-        Returns:
-            latent poses of ligand/protein structures passed in, and
-            log densities of latent poses
         """
-        log_pxv = torch.zeros(data.ligand.shape[0], device=data.ligand.device)
+        flow_logp = torch.zeros(data.num_frames, device=data.device) 
+        # Initialize trajectory and add starting frame
+        flow_metadata = FlowTrajectoryMetadata()
+        flow_metadata.trajectory.append(data.copy())
+        # Run through flow layers
         for coupling_layer in reversed(self.coupling_layers):
-            data, delta_log_pxv = coupling_layer(data, FlowDirection.BACKWARD)
-            log_pxv = log_pxv + delta_log_pxv
-        delta_log_pxv = log_pxv.detach().clone()
+            data, layer_logp = coupling_layer(data, FlowDirection.BACKWARD)
+            flow_logp = flow_logp + layer_logp
+            flow_metadata.trajectory.append(data.copy())
+        flow_metadata.flow_logp = flow_logp
+        return data, flow_metadata
 
-        protein_center = torch.mean(data.receptor, dim=1)
-        ligand_center = torch.mean(data.ligand, dim=1)
-        log_pxv = log_pxv + self.log_x_latent_density(
-            (ligand_center - protein_center).reshape((-1, 1, 3))
-        )
-        log_pxv = log_pxv + self.log_v_latent_density((data.v_rot, data.v_tr))
-        return data, log_pxv, delta_log_pxv
-
-    def data_to_latent(self, data: VerletFrame):
-        """
-        Computes the pre-image of data under the flow and the latent log densities
-
-        Args:
-            data: ligand/protein structures
-
-        Returns:
-            latent poses of ligand/protein structures passed in, and
-            log densities of latent poses
-        """
-        return self._data_to_latent(data)
-
-    def forward(self, data):
-        _, log_pxv, _ = self.data_to_latent(data)
-        return log_pxv
-
+    # NEEDS TO BE UPDATED
     def check_invertible(self, data: VerletFrame):
         """
         Checks that flow is invertible
@@ -203,29 +168,20 @@ class FrameDockingCouplingLayer(nn.Module):
             s_rot, s_tr, t_rot, t_tr = self.st_net(data)
             data.v_rot = data.v_rot * torch.exp(s_rot) + t_rot
             data.v_tr = data.v_tr * torch.exp(s_tr) + t_tr
-            print(
-                f"Devices: timestep is {timestep.device}, data.v_rot is {data.v_rot.device}"
-            )
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
             v_rot_matrix = axis_angle_to_matrix(update_rot).squeeze()
-            apply_update(data, v_rot_matrix, update_tr)
+            data = apply_update(data, v_rot_matrix, update_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)
             return data, delta_pxv
         elif flow_direction == FlowDirection.BACKWARD:
             # backward coupling step
-            print(
-                f"Devices: timestep is {timestep.device}, data.v_rot is {data.v_rot.device}"
-            )
-            print(f"Shape of data.ligand: {data.ligand.shape}")
             update_rot = timestep * data.v_rot
             update_tr = timestep * data.v_tr
             negative_v_rot_matrix = axis_angle_to_matrix(-update_rot).squeeze()
-            apply_update(data, negative_v_rot_matrix, -data.v_tr)
-            print(f"Shape of data.ligand: {data.ligand.shape}")
+            data = apply_update(data, negative_v_rot_matrix, -data.v_tr)
             # all shapes batch_size x 3
             s_rot, s_tr, t_rot, t_tr = self.st_net(data)
-            breakpoint()
             data.v_rot = (data.v_rot - t_rot) * torch.exp(-s_rot)
             data.v_tr = (data.v_tr - t_tr) * torch.exp(-s_tr)
             delta_pxv = -torch.sum(s_rot, axis=-1) - torch.sum(s_tr, axis=-1)

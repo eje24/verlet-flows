@@ -10,8 +10,8 @@ import torch
 torch.multiprocessing.set_sharing_strategy("file_system")
 
 from utils.parsing import display_args, parse_args
-from datasets.frame_dataset import FrameDataset, VerletFrame
-from model.frame_docking.frame_docking_flow import FrameDockingVerletFlow
+from datasets.frame_dataset import FramePrior, FrameDataset, VerletFrame
+from model.frame_docking.frame_docking_flow import FlowWrapper, FrameDockingVerletFlow
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
@@ -159,12 +159,15 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    model_class = FrameDockingVerletFlow
-    model = model_class(
+    flow = FrameDockingVerletFlow(
         num_coupling_layers=args.num_coupling_layers,
         distance_embed_dim=args.distance_embed_dim,
         device=device,
     )
+    prior = FramePrior(
+        device = device
+    )
+    model = FlowWrapper(flow, prior)
     model.to(device)
     return model
 
@@ -239,7 +242,7 @@ def main_function():
         torch.backends.cudnn.benchmark = True
 
     # construct loader
-    train_loader, val_loader = FrameDataset.construct_loaders(args, device)
+    train_loader, val_loader = FrameDataset.construct_train_loaders(args, device)
 
     model = get_model(args, device)
     optimizer, scheduler = get_optimizer_and_scheduler(

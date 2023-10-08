@@ -25,11 +25,13 @@ def uniform_so3_random(num_rotations: int):
 ####################
 
 
-def log_gaussian_density(x: torch.Tensor):
+# Density helper function for simple Gaussians
+def log_gaussian_density(x: torch.Tensor, mean = torch.tensor(0.0), std = torch.tensor(1.0)):
     """
     Args:
         x: tensor of shape ... x N
     Returns:
         R^N Gaussian density
     """
-    return -0.5 * torch.sum(x * x, axis=-1) - 0.5 * torch.log(torch.tensor(2 * math.pi))
+    N = x.shape[-1]
+    return -N/2 * torch.log(torch.tensor(2 * math.pi)) - N / 2 * torch.log(std) - 1 / (2 * std) * ((x - mean) @ (x - mean).T)
