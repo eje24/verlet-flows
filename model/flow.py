@@ -46,7 +46,7 @@ class LogGaussianCoxProcess(Density):
         raise NotImplementedError()
 
 # Flow architecture based on existing literature
-# See Appendix E.2 in https://arxiv.org/pdf/1906.04032.pdf
+# See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(nn.Module):
     def __init__(self, data_dim, num_vp_layers, num_nvp_layers):
         super().__init__()
