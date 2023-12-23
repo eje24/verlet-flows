@@ -7,11 +7,11 @@ from tqdm import tqdm
 import wandb
 import torch
 
-torch.multiprocessing.set_sharing_strategy("file_system")
+# torch.multiprocessing.set_sharing_strategy("file_system")
 
 from utils.parsing import display_args, parse_args
-from datasets.frame_dataset import FramePrior, FrameDataset, VerletFrame
-from model.frame_docking.frame_docking_flow import FlowWrapper, FrameDockingVerletFlow
+from model.flow import FlowWrapper, VerletFlow
+from datasets.dist import GMM, Gaussian, VerletGaussian, VerletGMM
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
@@ -56,30 +56,30 @@ class AverageMeter:
             return out
 
 
-def train_epoch(model, loader, optimizer, device):
-    model.train()
+def train_epoch(flow_wrapper, optimizer, device, num_train, batch_size, num_integrator_steps):
+    flow_wrapper.train()
     meter = AverageMeter(["loss"])
 
-    for receptor, ligand, v_rot, v_tr in tqdm(loader, total=len(loader)):
+    num_batches = math.ceil(num_train / batch_size)
+    for _ in tqdm(range(num_batches), total=num_batches):
         optimizer.zero_grad()
         try:
-            data = VerletFrame(receptor, ligand, v_rot, v_tr)
-            log_pxv = model(data)
-            loss = -torch.mean(log_pxv)
+            logp = flow_wrapper(batch_size, num_integrator_steps)
+            loss = -torch.mean(logp)
             loss.backward()
             optimizer.step()
             meter.add([loss.cpu().detach()])
         except RuntimeError as e:
             if "out of memory" in str(e):
                 print("| WARNING: ran out of memory, skipping batch")
-                for p in model.parameters():
+                for p in flow_wrapper.parameters():
                     if p.grad is not None:
                         del p.grad  # free some memory
                 torch.cuda.empty_cache()
                 continue
             elif "Input mismatch" in str(e):
                 print("| WARNING: weird torch_cluster error, skipping batch")
-                for p in model.parameters():
+                for p in flow_wrapper.parameters():
                     if p.grad is not None:
                         del p.grad  # free some memory
                 torch.cuda.empty_cache()
@@ -89,27 +89,29 @@ def train_epoch(model, loader, optimizer, device):
     return meter.summary()
 
 
-def test_epoch(model, loader):
-    model.eval()
+def test_epoch(flow_wrapper, num_test, batch_size, num_integrator_steps):
+    flow_wrapper.eval()
     meter = AverageMeter(["loss"], unpooled_metrics=True)
-    for data in tqdm(loader, total=len(loader)):
+
+    num_batches = math.ceil(num_test / batch_size)
+    for _ in tqdm(range(num_batches), total=num_batches):
         try:
             with torch.no_grad():
-                log_pxv = model(VerletFrame(*data))
-            loss = -torch.mean(log_pxv)
+                logp = flow_wrapper(batch_size, num_integrator_steps)
+            loss = -torch.mean(logp)
             meter.add([loss.cpu().detach()])
 
         except RuntimeError as e:
             if "out of memory" in str(e):
                 print("| WARNING: ran out of memory, skipping batch")
-                for p in model.parameters():
+                for p in flow_wrapper.parameters():
                     if p.grad is not None:
                         del p.grad  # free some memory
                 torch.cuda.empty_cache()
                 continue
             elif "Input mismatch" in str(e):
                 print("| WARNING: weird torch_cluster error, skipping batch")
-                for p in model.parameters():
+                for p in flow_wrapper.parameters():
                     if p.grad is not None:
                         del p.grad  # free some memory
                 torch.cuda.empty_cache()
@@ -159,20 +161,37 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    flow = FrameDockingVerletFlow(
-        num_coupling_layers=args.num_coupling_layers,
-        distance_embed_dim=args.distance_embed_dim,
-        device=device,
+    # Initialize model
+    verlet_flow = VerletFlow(2, 5, 10)
+
+    # Initialize sampleable source distribution
+    q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+    p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+    source = VerletGaussian(
+        q_sampleable = q_sampleable,
+        p_sampleable = p_sampleable,
     )
-    prior = FramePrior(
-        device = device
+
+    # Initialize target density
+    q_density = GMM(device=device, nmode=3, xlim=1.0, scale=1.0)
+    p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+    target = VerletGMM(
+        q_density = q_density,
+        p_density = p_density,
     )
-    model = FlowWrapper(flow, prior)
+
+    # Initialize flow wrapper
+    model = FlowWrapper(
+        flow = verlet_flow,
+        source = source,
+        target = target,
+    )
     model.to(device)
+
     return model
 
 
-def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
+def train(args, flow_wrapper, optimizer, scheduler, run_dir):
     best_val_loss = math.inf
     best_val_inference_value = math.inf
     best_epoch = 0
@@ -183,10 +202,10 @@ def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
         if epoch % 5 == 0:
             print("Run name: ", args.run_name)
         logs = {}
-        train_losses = train_epoch(model, train_loader, optimizer, device)
+        train_losses = train_epoch(flow_wrapper, optimizer, device, args.num_train, args.batch_size, args.num_integrator_steps)
         print("Epoch {}: Training loss {:.4f}".format(epoch, train_losses["loss"]))
 
-        val_losses = test_epoch(model, val_loader)
+        val_losses = test_epoch(flow_wrapper, args.num_val, args.batch_size, args.num_integrator_steps)
         print("Epoch {}: Validation loss {:.4f}".format(epoch, val_losses["loss"]))
 
         if args.wandb:
@@ -195,7 +214,7 @@ def train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir):
             logs["current_lr"] = optimizer.param_groups[0]["lr"]
             wandb.log(logs, step=epoch + 1)
 
-        state_dict = model.state_dict() if device.type == "cuda" else model.state_dict()
+        state_dict = flow_wrapper.state_dict() if device.type == "cuda" else flow_wrapper.state_dict()
         if val_losses["loss"] <= best_val_loss:
             best_val_loss = val_losses["loss"]
             best_epoch = epoch
@@ -241,9 +260,6 @@ def main_function():
     if args.cudnn_benchmark:
         torch.backends.cudnn.benchmark = True
 
-    # construct loader
-    train_loader, val_loader = FrameDataset.construct_train_loaders(args, device)
-
     model = get_model(args, device)
     optimizer, scheduler = get_optimizer_and_scheduler(
         args, model, scheduler_mode="min"
@@ -257,14 +273,14 @@ def main_function():
             if args.restart_lr is not None:
                 dict["optimizer"]["param_groups"][0]["lr"] = args.restart_lr
             optimizer.load_state_dict(dict["optimizer"])
-            model.module.load_state_dict(dict["model"], strict=True)
+            model.load_state_dict(dict["model"], strict=True)
             print("Restarting from epoch", dict["epoch"])
         except Exception as e:
             print("Exception", e)
             dict = torch.load(
                 f"{args.restart_dir}/best_model.pt", map_location=torch.device("cpu")
             )
-            model.module.load_state_dict(dict, strict=True)
+            model.load_state_dict(dict, strict=True)
             print("Due to exception had to take the best epoch and no optimiser")
 
     numel = sum([p.numel() for p in model.parameters()])
@@ -286,7 +302,7 @@ def main_function():
     save_yaml_file(yaml_file_name, args.__dict__)
     args.device = device
 
-    train(args, model, optimizer, scheduler, train_loader, val_loader, run_dir)
+    train(args, model, optimizer, scheduler, run_dir)
 
 
 if __name__ == "__main__":
