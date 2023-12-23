@@ -161,34 +161,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    # Initialize model
-    verlet_flow = VerletFlow(2, 5, 10)
-
-    # Initialize sampleable source distribution
-    q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-    p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-    source = VerletGaussian(
-        q_sampleable = q_sampleable,
-        p_sampleable = p_sampleable,
-    )
-
-    # Initialize target density
-    q_density = GMM(device=device, nmode=3, xlim=1.0, scale=1.0)
-    p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-    target = VerletGMM(
-        q_density = q_density,
-        p_density = p_density,
-    )
-
-    # Initialize flow wrapper
-    model = FlowWrapper(
-        flow = verlet_flow,
-        source = source,
-        target = target,
-    )
-    model.to(device)
-
-    return model
+    return FlowWrapper.default_gmm_flow_wrapper(args, device)
 
 
 def train(args, flow_wrapper, optimizer, scheduler, run_dir):

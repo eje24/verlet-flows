@@ -2,7 +2,9 @@ import torch.nn as nn
 import torch
 from typing import Tuple, List, Optional
 
-from datasets.dist import Sampleable, Density
+import matplotlib.pyplot as plt
+
+from datasets.dist import Sampleable, Density, GMM, Gaussian, VerletGaussian, VerletGMM
 from datasets.verlet import VerletData
 
 
@@ -103,9 +105,9 @@ class VerletFlow(nn.Module):
         return p_nvp_matrix, p_nvp
 
 
-class VerletIntegrator(nn.Module):
+class VerletIntegrator():
     def __init__(self):
-        super().__init__()
+        pass
 
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     def integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
@@ -160,4 +162,62 @@ class FlowWrapper(nn.Module):
         source_data = self._source.sample(batch_size)
         _, trajectory = self.source_to_target(source_data, num_steps)
         return trajectory.total_logp()
+
+    # Non training-related functions
+
+    # Sample from flow
+    def sample(self, num_samples, num_steps) -> Tuple[VerletData, FlowTrajectory]:
+        source_data = self._source.sample(num_samples)
+        return self.source_to_target(source_data, num_steps)
+
+    def graph_time_marginals(self, num_samples, num_steps):
+        data, trajectory = self.sample(num_samples, num_steps)
+        num_marginals = num_steps + 1
+        fig, axs = plt.subplots(num_marginals, 1, figsize=(10, 10))
+        for i in range(num_marginals):
+            samples = trajectory.trajectory[i].q.detach().cpu().numpy()
+            axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
+        plt.show()
+
+
+    def load_from_file(self, filename):
+        self.load_state_dict(torch.load(filename))
+
+    @staticmethod
+    def default_gmm_flow_wrapper(args, device):
+        # Initialize model
+        verlet_flow = VerletFlow(2, 5, 10)
+
+        # Initialize sampleable source distribution
+        q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        source = VerletGaussian(
+            q_sampleable = q_sampleable,
+            p_sampleable = p_sampleable,
+        )
+
+        # Initialize target density
+        q_density = GMM(device=device, nmode=3, xlim=1.0, scale=0.2)
+        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        target = VerletGMM(
+            q_density = q_density,
+            p_density = p_density,
+        )
+
+        # Initialize flow wrapper
+        flow_wrapper = FlowWrapper(
+            flow = verlet_flow,
+            source = source,
+            target = target,
+        )
+        flow_wrapper.to(device)
+        
+        return flow_wrapper
+        
+
+
+
+
+
+
 
