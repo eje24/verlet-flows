@@ -77,10 +77,8 @@ class VerletFlow(nn.Module):
         q_nvp_matrix = self._q_nvp_net(x)
         # Reshape to matrix
         q_nvp_matrix = q_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
-        # Matrix-multiply with q
-        q_nvp = torch.bmm(q_nvp_matrix, data.q.unsqueeze(2)).squeeze(2)
 
-        return q_nvp_matrix, q_nvp
+        return q_nvp_matrix
 
     # Volume preserving component of p-update
     # Returns p_vp
@@ -99,10 +97,8 @@ class VerletFlow(nn.Module):
         p_nvp_matrix = self._p_nvp_net(x)
         # Reshape to matrix
         p_nvp_matrix = p_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
-        # Multiply with p
-        p_nvp = torch.bmm(p_nvp_matrix, data.p.unsqueeze(2)).squeeze(2)
 
-        return p_nvp_matrix, p_nvp
+        return p_nvp_matrix
 
 
 class VerletIntegrator():
@@ -116,16 +112,18 @@ class VerletIntegrator():
         q_vp = flow.q_vp(data)
         data = VerletData(data.q + (dt / 4) * q_vp, data.p, data.t + (dt / 4))
         # Non-volume preserving q update
-        q_nvp_matrix, q_nvp = flow.q_nvp(data)
-        data = VerletData(data.q + (dt / 4) * q_nvp, data.p, data.t + (dt / 4))
-        dlogp -= torch.exp(torch.einsum('ijj->i', ((dt / 4) * q_nvp_matrix)))
+        q_nvp_matrix = flow.q_nvp(data)
+        new_q = torch.bmm(torch.linalg.matrix_exp((dt / 4) * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
+        data = VerletData(new_q, data.p, data.t + (dt / 4))
+        dlogp += torch.einsum('ijj->i', ((dt / 4) * q_nvp_matrix))
         # Volume-preserving p update
-        q_vp = flow.p_vp(data)
-        data = VerletData(data.q, data.p + (dt / 4) * q_vp, data.t + (dt / 4))
+        p_vp = flow.p_vp(data)
+        data = VerletData(data.q, data.p + (dt / 4) * p_vp, data.t + (dt / 4))
         # Non-volume preserving p update
-        p_nvp_matrix, p_nvp = flow.p_nvp(data)
-        data = VerletData(data.q, data.p + (dt / 4) * q_nvp, data.t + (dt / 4))
-        dlogp -= torch.exp(torch.einsum('ijj->i', ((dt / 4) * p_nvp_matrix)))
+        p_nvp_matrix = flow.p_nvp(data)
+        new_p = torch.bmm(torch.linalg.matrix_exp((dt / 4) * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
+        data = VerletData(data.q, new_p, data.t + (dt / 4))
+        dlogp += torch.einsum('ijj->i', ((dt / 4) * p_nvp_matrix))
         return data, dlogp
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
@@ -173,10 +171,15 @@ class FlowWrapper(nn.Module):
     def graph_time_marginals(self, num_samples, num_steps):
         data, trajectory = self.sample(num_samples, num_steps)
         num_marginals = num_steps + 1
-        fig, axs = plt.subplots(num_marginals, 1, figsize=(10, 10))
+        fig, axs = plt.subplots(1, num_marginals, figsize=(10, 10))
         for i in range(num_marginals):
             samples = trajectory.trajectory[i].q.detach().cpu().numpy()
             axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
+            axs[i].set_aspect('equal', 'box')
+            axs[i].set_title('t = ' + str(i / num_steps))
+            axs[i].set_xlim(-2.5, 2.5)
+            axs[i].set_ylim(-2.5, 2.5)
+        plt.subplots_adjust(wspace=1.0)
         plt.show()
 
 
@@ -186,7 +189,7 @@ class FlowWrapper(nn.Module):
     @staticmethod
     def default_gmm_flow_wrapper(args, device):
         # Initialize model
-        verlet_flow = VerletFlow(2, 5, 10)
+        verlet_flow = VerletFlow(2, 10, 20)
 
         # Initialize sampleable source distribution
         q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
@@ -197,7 +200,7 @@ class FlowWrapper(nn.Module):
         )
 
         # Initialize target density
-        q_density = GMM(device=device, nmode=3, xlim=1.0, scale=0.2)
+        q_density = GMM(device=device, nmode=args.nmodes, xlim=1.0, scale=0.2)
         p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGMM(
             q_density = q_density,

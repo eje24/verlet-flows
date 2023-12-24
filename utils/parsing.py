@@ -60,7 +60,6 @@ def parse_args(manual_args=None):
         "--w_decay", type=float, default=0.0, help="Weight decay added to loss"
     )
 
-    # Dataset
     parser.add_argument(
         "--num_train", type=int, default=450, help="Size of training set"
     )
@@ -69,6 +68,10 @@ def parse_args(manual_args=None):
     )
     parser.add_argument(
         "--num_integrator_steps", type=int, default=15, help="Number of integrator steps"
+    )
+    # GMM argument
+    parser.add_argument(
+        "--nmodes", type=int, default=3, help="Number of modes in the GMM"
     )
 
     args = (
