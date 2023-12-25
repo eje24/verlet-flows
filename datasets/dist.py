@@ -96,7 +96,7 @@ class VerletGMM(Density):
         p = self.p_density.get_density(data.p)
         return q + p
 
-class VerletGaussian(Sampleable):
+class VerletGaussian(Sampleable, Density):
     def __init__(self, q_sampleable: Gaussian, p_sampleable: Gaussian):
         self.q_sampleable = q_sampleable
         self.p_sampleable = p_sampleable
@@ -105,5 +105,10 @@ class VerletGaussian(Sampleable):
         q = self.q_sampleable.sample(n)
         p = self.p_sampleable.sample(n)
         return VerletData(q, p, 0.0)
+
+    def get_density(self, data: VerletData):
+        q = self.q_sampleable.get_density(data.q)
+        p = self.p_sampleable.get_density(data.p)
+        return q + p
 
 

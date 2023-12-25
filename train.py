@@ -64,8 +64,7 @@ def train_epoch(flow_wrapper, optimizer, device, num_train, batch_size, num_inte
     for _ in tqdm(range(num_batches), total=num_batches):
         optimizer.zero_grad()
         try:
-            logp = flow_wrapper(batch_size, num_integrator_steps)
-            loss = -torch.mean(logp)
+            loss = flow_wrapper(batch_size, num_integrator_steps)
             loss.backward()
             optimizer.step()
             meter.add([loss.cpu().detach()])
@@ -97,8 +96,7 @@ def test_epoch(flow_wrapper, num_test, batch_size, num_integrator_steps):
     for _ in tqdm(range(num_batches), total=num_batches):
         try:
             with torch.no_grad():
-                logp = flow_wrapper(batch_size, num_integrator_steps)
-            loss = -torch.mean(logp)
+                loss = flow_wrapper(batch_size, num_integrator_steps)
             meter.add([loss.cpu().detach()])
 
         except RuntimeError as e:
