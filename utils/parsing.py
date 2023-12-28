@@ -39,9 +39,9 @@ def parse_args(manual_args=None):
 
     # Training arguments
     parser.add_argument(
-        "--n_epochs", type=int, default=75, help="Number of epochs for training"
+        "--n_epochs", type=int, default=25, help="Number of epochs for training"
     )
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--scheduler", type=str, default=None, help="LR scheduler")
     parser.add_argument(
         "--scheduler_patience",
@@ -49,7 +49,7 @@ def parse_args(manual_args=None):
         default=20,
         help="Patience of the LR scheduler",
     )
-    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate")
+    parser.add_argument("--lr", type=float, default=1e-2, help="Initial learning rate")
     parser.add_argument(
         "--restart_lr",
         type=float,
@@ -61,7 +61,7 @@ def parse_args(manual_args=None):
     )
 
     parser.add_argument(
-        "--num_train", type=int, default=450, help="Size of training set"
+        "--num_train", type=int, default=4096, help="Size of training set"
     )
     parser.add_argument(
         "--num_val", type=int, default=50, help="Size of validation set"

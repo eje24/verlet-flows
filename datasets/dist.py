@@ -26,6 +26,7 @@ class GMM(Density, Sampleable):
         loc = torch.tensor(np_loc, dtype = torch.float).to(device)
         dist = D.Normal(loc, torch.ones(size=(nmode, 2), device=device) * scale * xlim)
         comp = D.Independent(dist, 1)
+        self.device = device
         self.gmm = D.MixtureSameFamily(mix, comp)
 
     def get_density(self, x):
@@ -33,6 +34,15 @@ class GMM(Density, Sampleable):
 
     def sample(self, n):
         return self.gmm.sample((n,))
+
+    def graph_density(self, bins=100):
+        # Use np.meshgrid to create a grid of points
+        x = np.linspace(-3, 3, bins)
+        y = np.linspace(-3, 3, bins)
+        X, Y = np.meshgrid(x, y)
+        xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
+        density = self.get_density(torch.tensor(xy, device=self.device)).cpu().numpy().reshape(bins, bins)
+        plt.imshow(density, extent=[-3, 3, -3, 3])
 
     def graph(self, N, bins=100):
         # Sample N points

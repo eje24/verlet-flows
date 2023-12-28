@@ -18,41 +18,41 @@ class FlowTrajectory:
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(nn.Module):
-    def __init__(self, data_dim, num_vp_layers, num_nvp_layers):
+    def __init__(self, data_dim, num_vp_hidden, num_nvp_hidden):
         super().__init__()
         self._data_dim = data_dim
-        self._num_vp_layers = num_vp_layers
-        self._num_nvp_layers = num_nvp_layers
+        self._num_vp_hidden = num_vp_hidden
+        self._num_nvp_hidden = num_nvp_hidden
 
         # Initialize layers
-        self._q_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_layers),
+        self._q_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, self._num_vp_layers),
+                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, self._num_vp_layers),
+                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, data_dim))
-        self._q_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_layers),
+                                       nn.Linear(self._num_vp_hidden, data_dim))
+        self._q_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, self._num_nvp_layers),
+                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, self._num_nvp_layers),
+                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, data_dim * data_dim))
-        self._p_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_layers),
+                                       nn.Linear(self._num_nvp_hidden, data_dim * data_dim))
+        self._p_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, self._num_vp_layers),
+                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, self._num_vp_layers),
+                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_vp_layers, data_dim))
-        self._p_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_layers),
+                                       nn.Linear(self._num_vp_hidden, data_dim))
+        self._p_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, self._num_nvp_layers),
+                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, self._num_nvp_layers),
+                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
                                        nn.SELU(),
-                                       nn.Linear(self._num_nvp_layers, data_dim * data_dim))
+                                       nn.Linear(self._num_nvp_hidden, data_dim * data_dim))
 
 
 
@@ -107,20 +107,20 @@ class VerletIntegrator():
         dlogp = torch.zeros((data.batch_size(),), device=data.device())
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
-        data = VerletData(data.q + (dt / 4) * q_vp, data.p, data.t + (dt / 4))
-        # Non-volume preserving q update
+        data = VerletData(data.q + dt * q_vp, data.p, data.t)
+        # Non-volume-preserving q update
         q_nvp_matrix = flow.q_nvp(data)
-        new_q = torch.bmm(torch.linalg.matrix_exp((dt / 4) * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
-        data = VerletData(new_q, data.p, data.t + (dt / 4))
-        dlogp -= torch.einsum('ijj->i', ((dt / 4) * q_nvp_matrix))
+        new_q = torch.bmm(torch.linalg.matrix_exp(dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
+        data = VerletData(new_q, data.p, data.t)
+        dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
         # Volume-preserving p update
         p_vp = flow.p_vp(data)
-        data = VerletData(data.q, data.p + (dt / 4) * p_vp, data.t + (dt / 4))
-        # Non-volume preserving p update
+        data = VerletData(data.q, data.p + dt * p_vp, data.t)
+        # Non-volume-preserving p update
         p_nvp_matrix = flow.p_nvp(data)
-        new_p = torch.bmm(torch.linalg.matrix_exp((dt / 4) * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
-        data = VerletData(data.q, new_p, data.t + (dt / 4))
-        dlogp -= torch.einsum('ijj->i', ((dt / 4) * p_nvp_matrix))
+        new_p = torch.bmm(torch.linalg.matrix_exp(dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
+        data = VerletData(data.q, new_p, data.t + dt)
+        dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
         return data, dlogp
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
@@ -151,26 +151,30 @@ class FlowWrapper(nn.Module):
         data, trajectory = self._integrator.integrate(self._flow, data, trajectory, num_steps)
         return data, trajectory
 
+    def sample(self, num_samples, num_steps) -> Tuple[VerletData, FlowTrajectory]:
+        source_data = self._source.sample(num_samples)
+        return self.source_to_target(source_data, num_steps)
+
     def forward_kl_loss(self, batch_size, num_steps) -> torch.Tensor:
         raise NotImplementedError
 
     def reverse_kl_loss(self, batch_size, num_steps) -> torch.Tensor:
-        source_data = self._source.sample(batch_size)
-        data, trajectory = self.source_to_target(source_data, num_steps)
+        data, trajectory = self.sample(batch_size, num_steps)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         target_logp = self._target.get_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
+    def energy_loss(self, batch_size, num_steps):
+        data, trajectory = self.sample(batch_size, num_steps)
+        target_logp = self._target.get_density(data)
+        return -torch.mean(target_logp)
+
     # Energy-based training using the integrator
     def forward(self, batch_size, num_steps) -> Tuple[VerletData, torch.Tensor]:
-        return self.reverse_kl_loss(batch_size, num_steps)
+        return self.energy_loss(batch_size, num_steps)
+        # return self.reverse_kl_loss(batch_size, num_steps)
 
     # Non training-related functions
-
-    # Sample from flow
-    def sample(self, num_samples, num_steps) -> Tuple[VerletData, FlowTrajectory]:
-        source_data = self._source.sample(num_samples)
-        return self.source_to_target(source_data, num_steps)
 
     def graph_time_marginals(self, num_samples, num_steps):
         data, trajectory = self.sample(num_samples, num_steps)
@@ -181,8 +185,8 @@ class FlowWrapper(nn.Module):
             axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
             axs[i].set_aspect('equal', 'box')
             axs[i].set_title('t = ' + str(i / num_steps))
-            axs[i].set_xlim(-2, 2)
-            axs[i].set_ylim(-2, 2)
+            axs[i].set_xlim(-2, 3)
+            axs[i].set_ylim(-2, 3)
         plt.subplots_adjust(wspace=1.0)
         plt.show()
 
@@ -204,12 +208,17 @@ class FlowWrapper(nn.Module):
         )
 
         # Initialize target density
-        q_density = GMM(device=device, nmode=args.nmodes, xlim=0.5, scale=0.2)
+        q_density = GMM(device=device, nmode=3, xlim=1.0, scale=0.5)
         p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGMM(
             q_density = q_density,
             p_density = p_density,
         )
+        # scale = 0.15
+        # target = VerletGaussian(
+        #     q_sampleable = Gaussian(torch.ones(2, device=device), torch.tensor([[3, 1], [1.0, 1.0]], device=device)),
+        #     p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device)),
+        # )
 
         # Initialize flow wrapper
         flow_wrapper = FlowWrapper(
