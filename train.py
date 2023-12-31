@@ -3,6 +3,7 @@ import resource
 import math
 import os
 from tqdm import tqdm
+import warnings
 
 import wandb
 import torch
@@ -159,7 +160,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    return FlowWrapper.default_gmm_flow_wrapper(args, device)
+    return FlowWrapper.default_flow_wrapper(args, device)
 
 
 def train(args, flow_wrapper, optimizer, scheduler, run_dir):
@@ -272,8 +273,9 @@ def main_function():
     yaml_file_name = os.path.join(run_dir, "model_parameters.yml")
     save_yaml_file(yaml_file_name, args.__dict__)
     args.device = device
-
-    train(args, model, optimizer, scheduler, run_dir)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        train(args, model, optimizer, scheduler, run_dir)
 
 
 if __name__ == "__main__":
