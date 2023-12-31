@@ -101,6 +101,11 @@ class VerletGMM(Density):
         self.q_density = q_density
         self.p_density = p_density
 
+    def sample(self, n):
+        q = self.q_density.sample(n)
+        p = self.p_density.sample(n)
+        return VerletData(q, p, 1.0)
+
     def get_density(self, data: VerletData):
         q = self.q_density.get_density(data.q)
         p = self.p_density.get_density(data.p)

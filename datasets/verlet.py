@@ -7,3 +7,5 @@ class VerletData(_VerletData):
         return self.q.size()[0]
     def device(self):
         return self.q.device
+    def set_time(self, t: float):
+        return VerletData(self.q, self.p, t)

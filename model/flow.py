@@ -1,8 +1,11 @@
+import matplotlib.pyplot as plt
+import math
+
 import torch.nn as nn
 import torch
 from typing import Tuple, List, Optional
+import numpy as np
 
-import matplotlib.pyplot as plt
 
 from datasets.dist import Sampleable, Density, GMM, Gaussian, VerletGaussian, VerletGMM
 from datasets.verlet import VerletData
@@ -97,6 +100,17 @@ class VerletFlow(nn.Module):
 
         return p_nvp_matrix
 
+    def get_flow(self, data: VerletData):
+        # Get q component
+        q_vp, q_nvp_matrix = self.q_vp(data), self.q_nvp(data)
+        q_nvp = torch.bmm(q_nvp_matrix, data.q.unsqueeze(2)).squeeze(2)
+        dq = q_vp + q_nvp
+        # Get p component
+        p_vp, p_nvp_matrix = self.p_vp(data), self.p_nvp(data)
+        p_nvp = torch.bmm(p_nvp_matrix, data.p.unsqueeze(2)).squeeze(2)
+        dp = p_vp + p_nvp
+        return dq, dp
+
 
 class VerletIntegrator():
     def __init__(self):
@@ -119,34 +133,94 @@ class VerletIntegrator():
         # Non-volume-preserving p update
         p_nvp_matrix = flow.p_nvp(data)
         new_p = torch.bmm(torch.linalg.matrix_exp(dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
-        data = VerletData(data.q, new_p, data.t + dt)
+        data = VerletData(data.q, new_p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
+        # Time-update step
+        data = VerletData(data.q, data.p, data.t + dt)
+        return data, dlogp
+
+    def reverse_integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
+        dlogp = torch.zeros((data.batch_size(),), device=data.device())
+        # Time-update step
+        data = VerletData(data.q, data.p, data.t - dt)
+        # Non-volume-preserving p update
+        p_nvp_matrix = flow.p_nvp(data)
+        new_p = torch.bmm(torch.linalg.matrix_exp(-dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
+        data = VerletData(data.q, new_p, data.t)
+        dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
+        # Volume-preserving p update
+        p_vp = flow.p_vp(data)
+        data = VerletData(data.q, data.p - dt * p_vp, data.t)
+        # Non-volume-preserving q update
+        q_nvp_matrix = flow.q_nvp(data)
+        new_q = torch.bmm(torch.linalg.matrix_exp(-dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
+        data = VerletData(new_q, data.p, data.t)
+        dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
+        # Volume-preserving q update
+        q_vp = flow.q_vp(data)
+        data = VerletData(data.q - dt * q_vp, data.p, data.t)
         return data, dlogp
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
     def integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
+        trajectory.flow_logp = torch.zeros((data.batch_size(),), device=data.device())
         dt = 1.0 / num_steps
         for _ in range(num_steps):
             data, dlogp = self.integrate_step(flow, data, dt)
             trajectory.trajectory.append(data)
             trajectory.flow_logp += dlogp
         return data, trajectory
+
+    def reverse_integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
+        trajectory.flow_logp = torch.zeros((data.batch_size(),), device=data.device())
+        dt = 1.0 / num_steps
+        for _ in range(num_steps):
+            data, dlogp = self.reverse_integrate_step(flow, data, dt)
+            trajectory.trajectory.append(data)
+            trajectory.flow_logp += dlogp
+        return data, trajectory
+
+    # Check invertibility of integrator
+    def assert_consistency(self, flow: VerletFlow, data: VerletData, num_steps: int = 10):
+        source_data = data.set_time(0.0)
+        # Perform forward integration pass
+        forward_trajectory = FlowTrajectory()
+        forward_trajectory.trajectory.append(source_data)
+        target_data, trajectory = self.integrate(flow, data, forward_trajectory, num_steps)
+
+        # Assert that target data is at time t=1
+        assert math.isclose(target_data.t, 1.0), f"target_data.t = {target_data.t}"
+
+        # Perform reverse integration pass
+        reverse_trajectory = FlowTrajectory()
+        reverse_trajectory.trajectory.append(target_data)
+        recreated_source_data, reverse_trajectory = self.reverse_integrate(flow, target_data, reverse_trajectory, num_steps)
+
+        # Assert that recreated source data is at time t=0
+        assert math.isclose(recreated_source_data.t, 0.0, abs_tol=1e-9), f"recreated_source_data.t = {recreated_source_data.t}"
+        # Assert that source data and recreated source data are equal
+        assert torch.allclose(source_data.q, recreated_source_data.q, atol=1e-7), f"source_data.q = {source_data.q}, recreated_source_data.q = {recreated_source_data.q}"
+        assert torch.allclose(source_data.p, recreated_source_data.p, atol=1e-7), f"source_data.p = {source_data.p}, recreated_source_data.p = {recreated_source_data.p}"
+        # Assert that flow logp matches
+        assert torch.allclose(forward_trajectory.flow_logp, reverse_trajectory.flow_logp, atol=1e-7), f"forward_trajectory.flow_logp = {forward_trajectory.flow_logp}, reverse_trajectory.flow_logp = {reverse_trajectory.flow_logp}"
+        print("Consistency check passed")
+
         
 # Transforms a distribution "latent" to an (unnormalized) density "data"
 class FlowWrapper(nn.Module):
-    def __init__(self, flow: VerletFlow, source: Sampleable, target: Density):
+    def __init__(self, device, flow: VerletFlow, source: Sampleable, target: Density):
         super().__init__()
         self._flow = flow
         self._source = source
         self._target = target
         self._integrator = VerletIntegrator()
+        self._device = device
 
     def source_to_target(self, data: VerletData, num_steps) -> Tuple[VerletData, FlowTrajectory]:
         # Prepare trajectory
         trajectory = FlowTrajectory()
         trajectory.trajectory.append(data)
         trajectory.source_logp = self._source.get_density(data)
-        trajectory.flow_logp = torch.zeros((data.batch_size(),), device=data.device())
         # Integrate
         data, trajectory = self._integrator.integrate(self._flow, data, trajectory, num_steps)
         return data, trajectory
@@ -155,6 +229,7 @@ class FlowWrapper(nn.Module):
         source_data = self._source.sample(num_samples)
         return self.source_to_target(source_data, num_steps)
 
+    # Losses
     def forward_kl_loss(self, batch_size, num_steps) -> torch.Tensor:
         raise NotImplementedError
 
@@ -169,14 +244,48 @@ class FlowWrapper(nn.Module):
         target_logp = self._target.get_density(data)
         return -torch.mean(target_logp)
 
-    # Energy-based training using the integrator
+    # Sample from target, integrate backwards, compute density
+    # Only available if we can directly sample from target
+    def reverse_energy_loss(self, batch_size, num_steps):
+        # Sample from target
+        data = self._target.sample(batch_size)
+        # Prepare trajectory
+        trajectory = FlowTrajectory()
+        trajectory.trajectory.append(data.set_time(1.0))
+        # Integrate backwards
+        data, trajectory = self._integrator.reverse_integrate(self._flow, data, trajectory, num_steps)
+        source_logp = self._source.get_density(data)
+        return -torch.mean(source_logp)
+
     def forward(self, batch_size, num_steps) -> Tuple[VerletData, torch.Tensor]:
-        return self.energy_loss(batch_size, num_steps)
-        # return self.reverse_kl_loss(batch_size, num_steps)
+        # return self.energy_loss(batch_size, num_steps)
+        return self.reverse_kl_loss(batch_size, num_steps)
 
     # Non training-related functions
+    def assert_consistency(self, batch_size, num_steps):
+        data = self._source.sample(batch_size)
+        self._integrator.assert_consistency(self._flow, data, num_steps)
 
-    def graph_time_marginals(self, num_samples, num_steps):
+    # Graphs the q projection of the learned flow at p=0
+    def graph_flow_marginals(self, num_steps = 5, bins=100, xlim=3, ylim=3):
+        qx = np.linspace(-xlim, xlim, bins)
+        qy = np.linspace(-ylim, ylim, bins)
+        QX, QY = np.meshgrid(qx, qy)
+        qxy = torch.tensor(np.stack([QX.reshape(-1), QY.reshape(-1)]).T, dtype=torch.float32, device='cuda')
+
+        fix, axs = plt.subplots(1, num_steps, figsize=(10, 10))
+        for t in range(num_steps):
+            dq, _ = self._flow.get_flow(VerletData(qxy, torch.zeros_like(qxy, device=self._device), t / num_steps))
+            dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
+            axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
+            axs[t].set_aspect('equal', 'box')
+            axs[t].set_title('t = ' + str(t / num_steps))
+            axs[t].set_xlim(-xlim, xlim)
+            axs[t].set_ylim(-ylim, ylim)
+        plt.show()
+        
+
+    def graph_time_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
         data, trajectory = self.sample(num_samples, num_steps)
         num_marginals = num_steps + 1
         fig, axs = plt.subplots(1, num_marginals, figsize=(10, 10))
@@ -185,8 +294,8 @@ class FlowWrapper(nn.Module):
             axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
             axs[i].set_aspect('equal', 'box')
             axs[i].set_title('t = ' + str(i / num_steps))
-            axs[i].set_xlim(-2, 3)
-            axs[i].set_ylim(-2, 3)
+            axs[i].set_xlim(-xlim, xlim)
+            axs[i].set_ylim(-ylim, ylim)
         plt.subplots_adjust(wspace=1.0)
         plt.show()
 
@@ -195,7 +304,7 @@ class FlowWrapper(nn.Module):
         self.load_state_dict(torch.load(filename))
 
     @staticmethod
-    def default_gmm_flow_wrapper(args, device):
+    def default_flow_wrapper(args, device):
         # Initialize model
         verlet_flow = VerletFlow(2, 4, 10)
 
@@ -214,14 +323,10 @@ class FlowWrapper(nn.Module):
             q_density = q_density,
             p_density = p_density,
         )
-        # scale = 0.15
-        # target = VerletGaussian(
-        #     q_sampleable = Gaussian(torch.ones(2, device=device), torch.tensor([[3, 1], [1.0, 1.0]], device=device)),
-        #     p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device)),
-        # )
 
         # Initialize flow wrapper
         flow_wrapper = FlowWrapper(
+            device = device,
             flow = verlet_flow,
             source = source,
             target = target,
