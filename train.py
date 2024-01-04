@@ -151,6 +151,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
             factor=0.7,
             patience=args.scheduler_patience,
             min_lr=args.lr / 100,
+            verbose=True,
         )
     else:
         print("No scheduler")
@@ -193,9 +194,7 @@ def train(args, flow_wrapper, optimizer, scheduler, run_dir):
             torch.save(state_dict, os.path.join(run_dir, "best_model.pt"))
 
         if scheduler:
-            if args.val_inference_freq is not None:
-                scheduler.step(best_val_inference_value)
-            else:
+                print('scheduler step')
                 scheduler.step(val_losses["loss"])
 
         torch.save(

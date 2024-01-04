@@ -283,6 +283,16 @@ class FlowWrapper(nn.Module):
             axs[t].set_xlim(-xlim, xlim)
             axs[t].set_ylim(-ylim, ylim)
         plt.show()
+
+    def graph_end_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
+        data, trajectory = self.sample(num_samples, num_steps)
+        samples = trajectory.trajectory[-1].q.detach().cpu().numpy()
+        plt.hist2d(samples[:,0], samples[:,1], bins=100, density=True)
+        plt.title('t = 1.0')
+        plt.gca().set_aspect('equal', 'box')
+        plt.xlim(-xlim, xlim)
+        plt.ylim(-ylim, ylim)
+        plt.show()
         
 
     def graph_time_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
@@ -297,6 +307,7 @@ class FlowWrapper(nn.Module):
             axs[i].set_xlim(-xlim, xlim)
             axs[i].set_ylim(-ylim, ylim)
         plt.subplots_adjust(wspace=1.0)
+        plt.tight_layout()
         plt.show()
 
 
