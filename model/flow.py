@@ -9,6 +9,7 @@ import numpy as np
 
 from datasets.dist import Sampleable, Density, GMM, Gaussian, VerletGaussian, VerletGMM
 from datasets.verlet import VerletData
+from utils.parsing import display_args
 
 
 class FlowTrajectory:
@@ -315,7 +316,7 @@ class FlowWrapper(nn.Module):
         self.load_state_dict(torch.load(filename))
 
     @staticmethod
-    def default_flow_wrapper(args, device):
+    def default_gmm_flow_wrapper(args, device):
         # Initialize model
         verlet_flow = VerletFlow(2, 4, 10)
 
@@ -328,7 +329,7 @@ class FlowWrapper(nn.Module):
         )
 
         # Initialize target density
-        q_density = GMM(device=device, nmode=3, xlim=1.0, scale=0.5)
+        q_density = GMM(device=device, nmode=args.nmodes, xlim=1.0, scale=0.5)
         p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGMM(
             q_density = q_density,
@@ -345,6 +346,28 @@ class FlowWrapper(nn.Module):
         flow_wrapper.to(device)
         
         return flow_wrapper
+
+    @staticmethod
+    def default_flow_wrapper(args, device) -> "FlowWrapper":
+        target_type = args.target
+        if target_type == 'gmm':
+            flow_wrapper = FlowWrapper.default_gmm_flow_wrapper(args, device)
+        elif target_type == 'gaussian':
+            flow_wrapper = FlowWrapper.default_gaussian_flow_wrapper(args, device)
+        else:
+            raise ValueError('Invalid target type')
+        return flow_wrapper
+
+    @staticmethod
+    def load_saved(path):
+        saved_dict = torch.load(path)
+        args = saved_dict['args']
+        display_args(args)
+        flow_wrapper = FlowWrapper.default_flow_wrapper(args, args.device)
+        flow_wrapper.load_state_dict(saved_dict['model'])
+        return flow_wrapper
+
+    
         
 
 

@@ -69,6 +69,10 @@ def parse_args(manual_args=None):
     parser.add_argument(
         "--num_integrator_steps", type=int, default=15, help="Number of integrator steps"
     )
+    # Flow arguments
+    parser.add_argument(
+        "--target", type=str, default="gmm", help="Target distribution"
+    )
     # GMM argument
     parser.add_argument(
         "--nmodes", type=int, default=3, help="Number of modes in the GMM"

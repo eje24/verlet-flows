@@ -191,8 +191,13 @@ def train(args, flow_wrapper, optimizer, scheduler, run_dir):
         if val_losses["loss"] <= best_val_loss:
             best_val_loss = val_losses["loss"]
             best_epoch = epoch
-            torch.save(state_dict, os.path.join(run_dir, "best_model.pt"))
-
+            torch.save(
+                {
+                    "model": state_dict,
+                    "args": args,
+                },
+                os.path.join(run_dir, "best_model.pt"),
+            )
         if scheduler:
                 print('scheduler step')
                 scheduler.step(val_losses["loss"])
@@ -201,6 +206,7 @@ def train(args, flow_wrapper, optimizer, scheduler, run_dir):
             {
                 "epoch": epoch,
                 "model": state_dict,
+                "args": args,
                 "optimizer": optimizer.state_dict(),
             },
             os.path.join(run_dir, "last_model.pt"),
