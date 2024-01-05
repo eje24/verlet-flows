@@ -79,7 +79,7 @@ class VerletFlow(nn.Module):
         # Reshape to matrix
         q_nvp_matrix = q_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
 
-        return q_nvp_matrix
+        return torch.clip(q_nvp_matrix, -20, 20)
 
     # Volume preserving component of p-update
     # Returns p_vp
@@ -99,7 +99,7 @@ class VerletFlow(nn.Module):
         # Reshape to matrix
         p_nvp_matrix = p_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
 
-        return p_nvp_matrix
+        return torch.clip(p_nvp_matrix, -20, 20)
 
     def get_flow(self, data: VerletData):
         # Get q component

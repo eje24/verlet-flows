@@ -66,6 +66,7 @@ def train_epoch(flow_wrapper, optimizer, device, num_train, batch_size, num_inte
         optimizer.zero_grad()
         try:
             loss = flow_wrapper(batch_size, num_integrator_steps)
+            torch.nn.utils.clip_grad_norm_(flow_wrapper.parameters(), 1.0)
             loss.backward()
             optimizer.step()
             meter.add([loss.cpu().detach()])
