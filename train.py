@@ -11,8 +11,7 @@ import torch
 # torch.multiprocessing.set_sharing_strategy("file_system")
 
 from utils.parsing import display_args, parse_args
-from model.flow import FlowWrapper, VerletFlow
-from datasets.dist import GMM, Gaussian, VerletGaussian, VerletGMM
+from model.flow import FlowWrapper
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))

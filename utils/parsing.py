@@ -49,7 +49,7 @@ def parse_args(manual_args=None):
         default=20,
         help="Patience of the LR scheduler",
     )
-    parser.add_argument("--lr", type=float, default=1e-2, help="Initial learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate")
     parser.add_argument(
         "--restart_lr",
         type=float,
@@ -64,15 +64,28 @@ def parse_args(manual_args=None):
         "--num_train", type=int, default=4096, help="Size of training set"
     )
     parser.add_argument(
-        "--num_val", type=int, default=50, help="Size of validation set"
+        "--num_val", type=int, default=1024, help="Size of validation set"
     )
     parser.add_argument(
-        "--num_integrator_steps", type=int, default=15, help="Number of integrator steps"
+        "--num_integrator_steps", type=int, default=8, help="Number of integrator steps"
     )
     # Flow arguments
     parser.add_argument(
         "--target", type=str, default="gmm", help="Target distribution"
     )
+    parser.add_argument(
+        "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
+    )
+    parser.add_argument(
+        "--num_vp_hidden_units", type=int, default=20, help="Number of hidden units"
+    )
+    parser.add_argument(
+        "--num_nvp_hidden_layers", type=int, default=10, help="Number of hidden layers"
+    )
+    parser.add_argument(
+        "--num_nvp_hidden_units", type=int, default=40, help="Number of hidden units"
+    )
+
     # GMM argument
     parser.add_argument(
         "--nmodes", type=int, default=3, help="Number of modes in the GMM"

@@ -22,43 +22,30 @@ class FlowTrajectory:
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(nn.Module):
-    def __init__(self, data_dim, num_vp_hidden, num_nvp_hidden):
+    def __init__(self, data_dim, num_vp_hidden, num_nvp_hidden, num_vp_layers, num_nvp_layers):
         super().__init__()
         self._data_dim = data_dim
         self._num_vp_hidden = num_vp_hidden
         self._num_nvp_hidden = num_nvp_hidden
 
         # Initialize layers
-        self._q_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, data_dim))
-        self._q_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, data_dim * data_dim))
-        self._p_vp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, self._num_vp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_vp_hidden, data_dim))
-        self._p_nvp_net = nn.Sequential(nn.Linear(data_dim + 1, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, self._num_nvp_hidden),
-                                       nn.SELU(),
-                                       nn.Linear(self._num_nvp_hidden, data_dim * data_dim))
+        self._q_vp_net = self._create_net(data_dim + 1, data_dim, num_vp_hidden, num_vp_layers)
+        self._q_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
+        self._p_vp_net = self._create_net(data_dim + 1, data_dim, num_vp_hidden, num_vp_layers)
+        self._p_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
 
-
+    def _create_net(self, in_dims, out_dims, num_hidden_units, num_hidden_layers):
+        # Contruct sequence of dimensions
+        dim_list = [in_dims] + [num_hidden_units for _ in range(num_hidden_layers)] + [out_dims]
+        # Construct network layers
+        net_list = []
+        for i in range(len(dim_list) - 1):
+            curr_dim, next_dim = dim_list[i], dim_list[i+1]
+            net_list.append(nn.Linear(curr_dim, next_dim))
+            # Don't add a SELU after the last linear layer
+            if i < len(dim_list) - 2:
+                net_list.append(nn.SELU())
+        return nn.Sequential(*net_list)
 
     # Below functions all return the vector field contribution, as well as the log Jacobian determinant of the transformation
 
@@ -318,7 +305,7 @@ class FlowWrapper(nn.Module):
     @staticmethod
     def default_gmm_flow_wrapper(args, device):
         # Initialize model
-        verlet_flow = VerletFlow(2, 4, 10)
+        verlet_flow = VerletFlow(2, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
 
         # Initialize sampleable source distribution
         q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
