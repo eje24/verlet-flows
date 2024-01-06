@@ -97,14 +97,16 @@ class Gaussian(Sampleable):
         plt.show()
 
 class VerletGMM(Density):
-    def __init__(self, q_density: GMM, p_density: Gaussian):
+    def __init__(self, q_density: GMM, p_density: Gaussian, t: float = 1.0):
         self.q_density = q_density
         self.p_density = p_density
+        self.t = t
 
     def sample(self, n):
         q = self.q_density.sample(n)
         p = self.p_density.sample(n)
-        return VerletData(q, p, 1.0)
+        t = self.t * torch.ones((n,1), device=q.device)
+        return VerletData(q, p, t)
 
     def get_density(self, data: VerletData):
         q = self.q_density.get_density(data.q)
@@ -112,14 +114,16 @@ class VerletGMM(Density):
         return q + p
 
 class VerletGaussian(Sampleable, Density):
-    def __init__(self, q_sampleable: Gaussian, p_sampleable: Gaussian):
+    def __init__(self, q_sampleable: Gaussian, p_sampleable: Gaussian, t: float = 1.0):
         self.q_sampleable = q_sampleable
         self.p_sampleable = p_sampleable
+        self.t = t
 
     def sample(self, n):
         q = self.q_sampleable.sample(n)
         p = self.p_sampleable.sample(n)
-        return VerletData(q, p, 0.0)
+        t = self.t * torch.ones((n,1), device=q.device)
+        return VerletData(q, p, t)
 
     def get_density(self, data: VerletData):
         q = self.q_sampleable.get_density(data.q)

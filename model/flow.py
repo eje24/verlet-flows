@@ -52,19 +52,17 @@ class VerletFlow(nn.Module):
     # Volume preserving component of q-update
     def q_vp(self, data: VerletData):
         # Concatenate p and time
-        t = data.t * torch.ones((data.batch_size(),1), device=data.device(), dtype=torch.float32)
-        x = torch.cat((data.p, t), dim=1)
+        x = torch.cat((data.p, data.t), dim=1)
         return self._q_vp_net(x)
         
     # Non-volume preserving component of q-update
     # Returns: q_nvp_matrix, q_nvp
     def q_nvp(self, data: VerletData):
-        t = data.t * torch.ones((data.batch_size(),1), device=data.device(), dtype=torch.float32)
-        x = torch.cat((data.p, t), dim=1)
+        x = torch.cat((data.p, data.t), dim=1)
         # Get matrix
         q_nvp_matrix = self._q_nvp_net(x)
         # Reshape to matrix
-        q_nvp_matrix = q_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
+        q_nvp_matrix = q_nvp_matrix.view(data.batch_size, self._data_dim, self._data_dim)
 
         return torch.clip(q_nvp_matrix, -20, 20)
 
@@ -72,19 +70,19 @@ class VerletFlow(nn.Module):
     # Returns p_vp
     def p_vp(self, data: VerletData):
         # Concatenate q and time
-        t = data.t * torch.ones((data.batch_size(),1), device=data.device(), dtype=torch.float32)
-        x = torch.cat((data.q, t), dim=1)
+        t = data.t * torch.ones((data.batch_size,1), device=data.device, dtype=torch.float32)
+        x = torch.cat((data.q, data.t), dim=1)
         return self._p_vp_net(x)
 
     # Non-volume preserving component of p-update
     # Returns p_vp_matrix, p_vp
     def p_nvp(self, data: VerletData):
-        t = data.t * torch.ones((data.batch_size(),1), device=data.device(), dtype=torch.float32)
-        x = torch.cat((data.q, t), dim=1)
+        t = data.t * torch.ones((data.batch_size,1), device=data.device, dtype=torch.float32)
+        x = torch.cat((data.q, data.t), dim=1)
         # Get matrix
         p_nvp_matrix = self._p_nvp_net(x)
         # Reshape to matrix
-        p_nvp_matrix = p_nvp_matrix.view(data.batch_size(), self._data_dim, self._data_dim)
+        p_nvp_matrix = p_nvp_matrix.view(data.batch_size, self._data_dim, self._data_dim)
 
         return torch.clip(p_nvp_matrix, -20, 20)
 
@@ -106,7 +104,7 @@ class VerletIntegrator():
 
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     def integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
-        dlogp = torch.zeros((data.batch_size(),), device=data.device())
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
         data = VerletData(data.q + dt * q_vp, data.p, data.t)
@@ -128,7 +126,7 @@ class VerletIntegrator():
         return data, dlogp
 
     def reverse_integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
-        dlogp = torch.zeros((data.batch_size(),), device=data.device())
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
         # Time-update step
         data = VerletData(data.q, data.p, data.t - dt)
         # Non-volume-preserving p update
@@ -151,7 +149,7 @@ class VerletIntegrator():
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
     def integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
-        trajectory.flow_logp = torch.zeros((data.batch_size(),), device=data.device())
+        trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
             data, dlogp = self.integrate_step(flow, data, dt)
@@ -160,7 +158,7 @@ class VerletIntegrator():
         return data, trajectory
 
     def reverse_integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
-        trajectory.flow_logp = torch.zeros((data.batch_size(),), device=data.device())
+        trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
             data, dlogp = self.reverse_integrate_step(flow, data, dt)
@@ -169,12 +167,12 @@ class VerletIntegrator():
         return data, trajectory
 
     # Check invertibility of integrator
-    def assert_consistency(self, flow: VerletFlow, data: VerletData, num_steps: int = 10):
-        source_data = data.set_time(0.0)
+    def assert_consistency(self, flow: VerletFlow, source_data: VerletData, num_steps: int = 10):
+        assert torch.allclose(source_data.t, torch.zeros_like(source_data.t, device=source_data.device), atol=1e-7), f"source_data.t = {source_data.t}"
         # Perform forward integration pass
         forward_trajectory = FlowTrajectory()
         forward_trajectory.trajectory.append(source_data)
-        target_data, trajectory = self.integrate(flow, data, forward_trajectory, num_steps)
+        target_data, trajectory = self.integrate(flow, source_data, forward_trajectory, num_steps)
 
         # Assert that target data is at time t=1
         assert math.isclose(target_data.t, 1.0), f"target_data.t = {target_data.t}"
@@ -185,7 +183,7 @@ class VerletIntegrator():
         recreated_source_data, reverse_trajectory = self.reverse_integrate(flow, target_data, reverse_trajectory, num_steps)
 
         # Assert that recreated source data is at time t=0
-        assert math.isclose(recreated_source_data.t, 0.0, abs_tol=1e-9), f"recreated_source_data.t = {recreated_source_data.t}"
+        assert torch.allclose(recreated_source_data.t, torch.zeros_like(recreated_source_data.t, device=recreated_source_data.device), atol=1e-7), f"recreated_source_data.t = {recreated_source_data.t}"
         # Assert that source data and recreated source data are equal
         assert torch.allclose(source_data.q, recreated_source_data.q, atol=1e-7), f"source_data.q = {source_data.q}, recreated_source_data.q = {recreated_source_data.q}"
         assert torch.allclose(source_data.p, recreated_source_data.p, atol=1e-7), f"source_data.p = {source_data.p}, recreated_source_data.p = {recreated_source_data.p}"
@@ -237,17 +235,34 @@ class FlowWrapper(nn.Module):
     def reverse_energy_loss(self, batch_size, num_steps):
         # Sample from target
         data = self._target.sample(batch_size)
+        data = data.set_time(torch.ones_like(data.t, device=data.device))
         # Prepare trajectory
         trajectory = FlowTrajectory()
-        trajectory.trajectory.append(data.set_time(1.0))
+        trajectory.trajectory.append(data)
         # Integrate backwards
         data, trajectory = self._integrator.reverse_integrate(self._flow, data, trajectory, num_steps)
         source_logp = self._source.get_density(data)
         return -torch.mean(source_logp)
 
+    def flow_matching_loss(self, batch_size):
+        # Sample from source and target
+        source_data = self._source.sample(batch_size)
+        target_data = self._target.sample(batch_size)
+        # Interploate
+        t = torch.rand((batch_size,1), device=source_data.device)
+        interpolated_data = VerletData.interpolate(source_data, target_data, t)
+        # Compute vector field
+        dq, dp = self._flow.get_flow(interpolated_data)
+        # Compute expected vector field
+        expected_dq = (target_data.q - source_data.q)
+        expected_dp = (target_data.p - source_data.p)
+        # Compute loss
+        return torch.mean((dq - expected_dq)**2 + (dp - expected_dp)**2)
+
     def forward(self, batch_size, num_steps) -> Tuple[VerletData, torch.Tensor]:
         # return self.energy_loss(batch_size, num_steps)
         return self.reverse_kl_loss(batch_size, num_steps)
+        # return self.flow_matching_loss(batch_size)
 
     # Non training-related functions
     def assert_consistency(self, batch_size, num_steps):
@@ -275,7 +290,7 @@ class FlowWrapper(nn.Module):
     def graph_end_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
         data, trajectory = self.sample(num_samples, num_steps)
         samples = trajectory.trajectory[-1].q.detach().cpu().numpy()
-        plt.hist2d(samples[:,0], samples[:,1], bins=100, density=True)
+        plt.hist2d(samples[:,0], samples[:,1], bins=300, density=True)
         plt.title('t = 1.0')
         plt.gca().set_aspect('equal', 'box')
         plt.xlim(-xlim, xlim)
@@ -303,7 +318,7 @@ class FlowWrapper(nn.Module):
         self.load_state_dict(torch.load(filename))
 
     @staticmethod
-    def default_gmm_flow_wrapper(args, device):
+    def default_flow_wrapper(args, device):
         # Initialize model
         verlet_flow = VerletFlow(2, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
 
@@ -313,15 +328,29 @@ class FlowWrapper(nn.Module):
         source = VerletGaussian(
             q_sampleable = q_sampleable,
             p_sampleable = p_sampleable,
+            t = 0.0
         )
 
         # Initialize target density
-        q_density = GMM(device=device, nmode=args.nmodes, xlim=1.0, scale=0.5)
-        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-        target = VerletGMM(
-            q_density = q_density,
-            p_density = p_density,
-        )
+        target = None
+        if args.target == 'gmm':
+            q_density = GMM(device=device, nmode=args.nmodes, xlim=1.0, scale=0.5)
+            p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+            target = VerletGMM(
+                q_density = q_density,
+                p_density = p_density,
+                t = 1.0
+            )
+        elif args.target == 'gaussian':
+            q_density = Gaussian(args.gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.gaussian_xvar, args.gaussian_xyvar], [args.gaussian_xyvar, args.gaussian_yvar]], device=device))
+            p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+            target = VerletGaussian(
+                q_sampleable = q_density,
+                p_sampleable = p_density,
+                t = 1.0
+            )
+        else:
+            raise ValueError('Invalid target type')
 
         # Initialize flow wrapper
         flow_wrapper = FlowWrapper(
@@ -332,17 +361,6 @@ class FlowWrapper(nn.Module):
         )
         flow_wrapper.to(device)
         
-        return flow_wrapper
-
-    @staticmethod
-    def default_flow_wrapper(args, device) -> "FlowWrapper":
-        target_type = args.target
-        if target_type == 'gmm':
-            flow_wrapper = FlowWrapper.default_gmm_flow_wrapper(args, device)
-        elif target_type == 'gaussian':
-            flow_wrapper = FlowWrapper.default_gaussian_flow_wrapper(args, device)
-        else:
-            raise ValueError('Invalid target type')
         return flow_wrapper
 
     @staticmethod
