@@ -317,60 +317,79 @@ class FlowWrapper(nn.Module):
     def load_from_file(self, filename):
         self.load_state_dict(torch.load(filename))
 
-    @staticmethod
-    def default_flow_wrapper(args, device):
-        # Initialize model
-        verlet_flow = VerletFlow(2, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
+# Utilities for generating and loading FlowWrapper objects
 
-        # Initialize sampleable source distribution
-        q_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+def build_source(args, device) -> Sampleable:
+    source = None
+    if args.source == 'gmm':
+        q_sampleable = GMM(device=device, nmode=args.source_nmodes, xlim=1.0, scale=0.5)
+        p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        source = VerletGMM(
+            q_density = q_sampleable,
+            p_density = p_sampleable,
+            t = 0.0
+        )
+    elif args.source == 'gaussian':
+        q_sampleable = Gaussian(args.source_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.source_gaussian_xvar, args.source_gaussian_xyvar], [args.source_gaussian_xyvar, args.source_gaussian_yvar]], device=device))
         p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         source = VerletGaussian(
             q_sampleable = q_sampleable,
             p_sampleable = p_sampleable,
             t = 0.0
         )
+    else:
+        raise ValueError('Invalid source distribution type')
+    return source
 
-        # Initialize target density
-        target = None
-        if args.target == 'gmm':
-            q_density = GMM(device=device, nmode=args.nmodes, xlim=1.0, scale=0.5)
-            p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-            target = VerletGMM(
-                q_density = q_density,
-                p_density = p_density,
-                t = 1.0
-            )
-        elif args.target == 'gaussian':
-            q_density = Gaussian(args.gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.gaussian_xvar, args.gaussian_xyvar], [args.gaussian_xyvar, args.gaussian_yvar]], device=device))
-            p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
-            target = VerletGaussian(
-                q_sampleable = q_density,
-                p_sampleable = p_density,
-                t = 1.0
-            )
-        else:
-            raise ValueError('Invalid target type')
-
-        # Initialize flow wrapper
-        flow_wrapper = FlowWrapper(
-            device = device,
-            flow = verlet_flow,
-            source = source,
-            target = target,
+def build_target(args, device) -> Density:
+    target = None
+    if args.target == 'gmm':
+        q_density = GMM(device=device, nmode=args.target_nmodes, xlim=1.0, scale=0.5)
+        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        target = VerletGMM(
+            q_density = q_density,
+            p_density = p_density,
+            t = 1.0
         )
-        flow_wrapper.to(device)
-        
-        return flow_wrapper
+    elif args.target == 'gaussian':
+        q_density = Gaussian(args.target_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
+        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        target = VerletGaussian(
+            q_sampleable = q_density,
+            p_sampleable = p_density,
+            t = 1.0
+        )
+    else:
+        raise ValueError('Invalid target type')
+    return target
 
-    @staticmethod
-    def load_saved(path):
-        saved_dict = torch.load(path)
-        args = saved_dict['args']
-        display_args(args)
-        flow_wrapper = FlowWrapper.default_flow_wrapper(args, args.device)
-        flow_wrapper.load_state_dict(saved_dict['model'])
-        return flow_wrapper
+
+def default_flow_wrapper(args, device) -> FlowWrapper:
+    # Initialize model
+    verlet_flow = VerletFlow(2, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
+
+    # Initialize source and target
+    source = build_source(args, device)
+    target = build_target(args, device)
+
+    # Initialize flow wrapper
+    flow_wrapper = FlowWrapper(
+        device = device,
+        flow = verlet_flow,
+        source = source,
+        target = target,
+    )
+    flow_wrapper.to(device)
+    
+    return flow_wrapper
+
+def load_saved(path) -> FlowWrapper:
+    saved_dict = torch.load(path)
+    args = saved_dict['args']
+    display_args(args)
+    flow_wrapper = default_flow_wrapper(args, args.device)
+    flow_wrapper.load_state_dict(saved_dict['model'])
+    return flow_wrapper
 
     
         

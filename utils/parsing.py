@@ -71,38 +71,58 @@ def parse_args(manual_args=None):
     )
     # Flow arguments
     parser.add_argument(
+        "--source", type=str, default="gaussian", help="Type of flow to use"
+    )
+    parser.add_argument(
         "--target", type=str, default="gmm", help="Target distribution"
     )
     parser.add_argument(
         "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
     )
     parser.add_argument(
-        "--num_vp_hidden_units", type=int, default=20, help="Number of hidden units"
+        "--num_vp_hidden_units", type=int, default=30, help="Number of hidden units"
     )
     parser.add_argument(
         "--num_nvp_hidden_layers", type=int, default=10, help="Number of hidden layers"
     )
     parser.add_argument(
-        "--num_nvp_hidden_units", type=int, default=40, help="Number of hidden units"
+        "--num_nvp_hidden_units", type=int, default=60, help="Number of hidden units"
+    )
+    # Source Gaussian arguments
+    parser.add_argument(
+        "--source_gaussian_mean", type=float, default=0.0, help="Mean of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_xvar", type=float, default=1.0, help="x variance of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_yvar", type=float, default=1.0, help="y variance of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_xyvar", type=float, default=0.0, help="xy covariance of the source Gaussian"
+    )
+    # Source GMM argument
+    parser.add_argument(
+        "--source_nmodes", type=int, default=2, help="Number of modes in the source GMM"
     )
 
-    # Gaussian arguments
+    # Target Gaussian arguments
     parser.add_argument(
-        "--gaussian_mean", type=float, default=1.0, help="Mean of the Gaussian"
+        "--target_gaussian_mean", type=float, default=1.0, help="Mean of the target Gaussian"
     )
     parser.add_argument(
-        "--gaussian_xvar", type=float, default=4.0, help="x variance of the Gaussian"
+        "--target_gaussian_xvar", type=float, default=4.0, help="x variance of the target Gaussian"
     )
     parser.add_argument(
-        "--gaussian_yvar", type=float, default=1.0, help="y variance of the Gaussian"
+        "--target_gaussian_yvar", type=float, default=1.0, help="y variance of the target Gaussian"
     )
     parser.add_argument(
-        "--gaussian_xyvar", type=float, default=1.0, help="xy covariance of the Gaussian"
+        "--target_gaussian_xyvar", type=float, default=1.0, help="xy covariance of the target Gaussian"
     )
 
-    # GMM argument
+    # Target GMM argument
     parser.add_argument(
-        "--nmodes", type=int, default=3, help="Number of modes in the GMM"
+        "--target_nmodes", type=int, default=3, help="Number of modes in the target GMM"
     )
 
     args = (

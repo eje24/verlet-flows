@@ -11,7 +11,7 @@ import torch
 # torch.multiprocessing.set_sharing_strategy("file_system")
 
 from utils.parsing import display_args, parse_args
-from model.flow import FlowWrapper
+from model.flow import default_flow_wrapper
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
@@ -161,7 +161,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    return FlowWrapper.default_flow_wrapper(args, device)
+    return default_flow_wrapper(args, device)
 
 
 def train(args, flow_wrapper, optimizer, scheduler, run_dir):
