@@ -7,7 +7,7 @@ from typing import Tuple, List, Optional
 import numpy as np
 
 
-from datasets.dist import Sampleable, Density, GMM, Gaussian, VerletGaussian, VerletGMM
+from datasets.dist import Sampleable, Density, GMM, Gaussian, Funnel, VerletGaussian, VerletGMM, VerletFunnel
 from datasets.verlet import VerletData
 from utils.parsing import display_args
 
@@ -380,6 +380,14 @@ def build_target(args, device) -> Density:
         q_dist = Gaussian(args.target_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
         p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGaussian(
+            q_dist = q_dist,
+            p_dist = p_dist,
+            t = 1.0
+        )
+    elif args.target == 'funnel':
+        q_dist = Funnel(device=device, dim=args.funnel_dim)
+        p_dist = Gaussian(torch.zeros(args.funnel_dim, device=device), torch.eye(args.funnel_dim, device=device))
+        target = VerletFunnel(
             q_dist = q_dist,
             p_dist = p_dist,
             t = 1.0

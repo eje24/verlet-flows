@@ -128,6 +128,11 @@ def parse_args(manual_args=None):
         "--target_nmodes", type=int, default=3, help="Number of modes in the target GMM"
     )
 
+    # Target Funnel argument
+    parser.add_argument(
+        "--funnel_dim", type=int, default=2, help="Dimension of the funnel"
+    )
+
     args = (
         parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
     )
