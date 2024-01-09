@@ -119,9 +119,9 @@ class Funnel(Sampleable, Density):
         # Get densities for each part
         x1_density = D.Normal(0, 1).log_prob(x1)
         # Get densities for remaining parts
-        x1_var = torch.exp(x1)
-        x2_D_mean = torch.zeros(self.dim - 1, device=self.device)
-        x2_D_covar = x1_var.view(-1, 1, 1) * torch.eye(self.dim - 1, device=self.device).view(1, self.dim - 1, self.dim - 1)
+        x1_var = torch.exp(x1) # (B, )
+        x2_D_mean = torch.zeros(self.dim - 1, device=self.device) # (D - 1, )
+        x2_D_covar = x1_var.view(-1, 1, 1) * torch.eye(self.dim - 1, device=self.device).view(1, self.dim - 1, self.dim - 1) # (B, D - 1, D - 1)
         x2_D_density = D.MultivariateNormal(x2_D_mean, x2_D_covar).log_prob(x2_D)
         return x1_density + x2_D_density
 

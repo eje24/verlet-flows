@@ -70,14 +70,12 @@ class VerletFlow(nn.Module):
     # Returns p_vp
     def p_vp(self, data: VerletData):
         # Concatenate q and time
-        t = data.t * torch.ones((data.batch_size,1), device=data.device, dtype=torch.float32)
         x = torch.cat((data.q, data.t), dim=1)
         return self._p_vp_net(x)
 
     # Non-volume preserving component of p-update
     # Returns p_vp_matrix, p_vp
     def p_nvp(self, data: VerletData):
-        t = data.t * torch.ones((data.batch_size,1), device=data.device, dtype=torch.float32)
         x = torch.cat((data.q, data.t), dim=1)
         # Get matrix
         p_nvp_matrix = self._p_nvp_net(x)
@@ -347,6 +345,8 @@ class FlowWrapper(nn.Module):
 def build_source(args, device) -> Sampleable:
     source = None
     if args.source == 'gmm':
+        if args.data_dim != 2:
+            raise ValueError('GMM source only supported for data_dim=2')
         q_dist = GMM(device=device, nmode=args.source_nmodes, xlim=1.0, scale=0.5)
         p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         source = VerletGMM(
@@ -355,8 +355,11 @@ def build_source(args, device) -> Sampleable:
             t = 0.0
         )
     elif args.source == 'gaussian':
-        q_dist = Gaussian(args.source_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.source_gaussian_xvar, args.source_gaussian_xyvar], [args.source_gaussian_xyvar, args.source_gaussian_yvar]], device=device))
-        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        if args.data_dim == 2:
+            q_dist = Gaussian(args.source_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.source_gaussian_xvar, args.source_gaussian_xyvar], [args.source_gaussian_xyvar, args.source_gaussian_yvar]], device=device))
+        else:
+            q_dist = Gaussian(args.source_gaussian_mean + torch.zeros(args.data_dim, device=device), torch.eye(args.data_dim, device=device))
+        p_dist = Gaussian(torch.zeros(args.data_dim, device=device), torch.eye(args.data_dim, device=device))
         source = VerletGaussian(
             q_dist = q_dist,
             p_dist = p_dist,
@@ -369,6 +372,8 @@ def build_source(args, device) -> Sampleable:
 def build_target(args, device) -> Density:
     target = None
     if args.target == 'gmm':
+        if args.data_dim != 2:
+            raise ValueError('GMM target only supported for 2D data')
         q_dist = GMM(device=device, nmode=args.target_nmodes, xlim=1.0, scale=0.5)
         p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGMM(
@@ -377,16 +382,19 @@ def build_target(args, device) -> Density:
             t = 1.0
         )
     elif args.target == 'gaussian':
-        q_dist = Gaussian(args.target_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
-        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        if args.data_dim == 2:
+            q_dist = Gaussian(args.target_gaussian_mean + torch.zeros(args.data_dim, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
+        else:
+            q_dist = Gaussian(args.target_gaussian_mean + torch.zeros(args.data_dim, device=device), torch.eye(args.data_dim, device=device))
+        p_dist = Gaussian(torch.zeros(args.data_dim, device=device), torch.eye(args.data_dim, device=device))
         target = VerletGaussian(
             q_dist = q_dist,
             p_dist = p_dist,
             t = 1.0
         )
     elif args.target == 'funnel':
-        q_dist = Funnel(device=device, dim=args.funnel_dim)
-        p_dist = Gaussian(torch.zeros(args.funnel_dim, device=device), torch.eye(args.funnel_dim, device=device))
+        q_dist = Funnel(device=device, dim=args.data_dim)
+        p_dist = Gaussian(torch.zeros(args.data_dim, device=device), torch.eye(args.data_dim, device=device))
         target = VerletFunnel(
             q_dist = q_dist,
             p_dist = p_dist,
@@ -399,7 +407,7 @@ def build_target(args, device) -> Density:
 
 def default_flow_wrapper(args, device) -> FlowWrapper:
     # Initialize model
-    verlet_flow = VerletFlow(2, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
+    verlet_flow = VerletFlow(args.data_dim, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
 
     # Initialize source and target
     source = build_source(args, device)

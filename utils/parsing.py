@@ -80,6 +80,9 @@ def parse_args(manual_args=None):
         "--target", type=str, default="gmm", help="Target distribution"
     )
     parser.add_argument(
+        "--data_dim", type=int, default=2, help="Dimension of the q distributions"
+    )
+    parser.add_argument(
         "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
     )
     parser.add_argument(
@@ -128,10 +131,6 @@ def parse_args(manual_args=None):
         "--target_nmodes", type=int, default=3, help="Number of modes in the target GMM"
     )
 
-    # Target Funnel argument
-    parser.add_argument(
-        "--funnel_dim", type=int, default=2, help="Dimension of the funnel"
-    )
 
     args = (
         parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
