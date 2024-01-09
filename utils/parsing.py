@@ -69,6 +69,9 @@ def parse_args(manual_args=None):
     parser.add_argument(
         "--num_integrator_steps", type=int, default=8, help="Number of integrator steps"
     )
+    parser.add_argument(
+        "--loss", type=str, default="likelihood_loss", help="Loss function to use"
+    )
     # Flow arguments
     parser.add_argument(
         "--source", type=str, default="gaussian", help="Type of flow to use"

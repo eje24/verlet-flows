@@ -191,16 +191,24 @@ class VerletIntegrator():
         assert torch.allclose(forward_trajectory.flow_logp, reverse_trajectory.flow_logp, atol=1e-7), f"forward_trajectory.flow_logp = {forward_trajectory.flow_logp}, reverse_trajectory.flow_logp = {reverse_trajectory.flow_logp}"
         print("Consistency check passed")
 
-        
 # Transforms a distribution "latent" to an (unnormalized) density "data"
 class FlowWrapper(nn.Module):
-    def __init__(self, device, flow: VerletFlow, source: Sampleable, target: Density):
+    def __init__(self, device, flow: VerletFlow, source: Sampleable, target: Density, loss = 'likelihood_loss'):
         super().__init__()
         self._flow = flow
         self._source = source
         self._target = target
         self._integrator = VerletIntegrator()
         self._device = device
+
+        # Set loss function
+        self._loss_fn = None
+        if loss == 'likelihood_loss':
+            self._loss_fn = self.likelihood_loss
+        elif loss == 'reverse_kl_loss':
+            self._loss_fn = self.reverse_kl_loss
+        else:
+            raise ValueError(f"Unknown loss function {loss}")
 
     def source_to_target(self, data: VerletData, num_steps) -> Tuple[VerletData, FlowTrajectory]:
         # Prepare trajectory
@@ -225,7 +233,7 @@ class FlowWrapper(nn.Module):
         target_logp = self._target.get_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
-    def energy_loss(self, batch_size, num_steps):
+    def forward_energy_loss(self, batch_size, num_steps):
         data, trajectory = self.sample(batch_size, num_steps)
         target_logp = self._target.get_density(data)
         return -torch.mean(target_logp)
@@ -244,6 +252,19 @@ class FlowWrapper(nn.Module):
         source_logp = self._source.get_density(data)
         return -torch.mean(source_logp)
 
+    def likelihood_loss(self, batch_size, num_steps):
+        # Sample from target
+        data = self._target.sample(batch_size)
+        data = data.set_time(torch.ones_like(data.t, device=data.device))
+        # Prepare trajectory
+        trajectory = FlowTrajectory()
+        trajectory.trajectory.append(data)
+        # Integrate backwards
+        data, trajectory = self._integrator.reverse_integrate(self._flow, data, trajectory, num_steps)
+        source_logp = self._source.get_density(data)
+        flow_logp = trajectory.flow_logp
+        return -torch.mean(source_logp + flow_logp)
+
     def flow_matching_loss(self, batch_size):
         # Sample from source and target
         source_data = self._source.sample(batch_size)
@@ -261,8 +282,9 @@ class FlowWrapper(nn.Module):
 
     def forward(self, batch_size, num_steps) -> Tuple[VerletData, torch.Tensor]:
         # return self.energy_loss(batch_size, num_steps)
-        return self.reverse_kl_loss(batch_size, num_steps)
+        # return self.reverse_kl_loss(batch_size, num_steps)
         # return self.flow_matching_loss(batch_size)
+        return self._loss_fn(batch_size, num_steps)
 
     # Non training-related functions
     def assert_consistency(self, batch_size, num_steps):
@@ -270,6 +292,7 @@ class FlowWrapper(nn.Module):
         self._integrator.assert_consistency(self._flow, data, num_steps)
 
     # Graphs the q projection of the learned flow at p=0
+    @torch.no_grad()
     def graph_flow_marginals(self, num_steps = 5, bins=100, xlim=3, ylim=3):
         qx = np.linspace(-xlim, xlim, bins)
         qy = np.linspace(-ylim, ylim, bins)
@@ -287,6 +310,7 @@ class FlowWrapper(nn.Module):
             axs[t].set_ylim(-ylim, ylim)
         plt.show()
 
+    @torch.no_grad()
     def graph_end_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
         data, trajectory = self.sample(num_samples, num_steps)
         samples = trajectory.trajectory[-1].q.detach().cpu().numpy()
@@ -298,6 +322,7 @@ class FlowWrapper(nn.Module):
         plt.show()
         
 
+    @torch.no_grad()
     def graph_time_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
         data, trajectory = self.sample(num_samples, num_steps)
         num_marginals = num_steps + 1
@@ -378,6 +403,7 @@ def default_flow_wrapper(args, device) -> FlowWrapper:
         flow = verlet_flow,
         source = source,
         target = target,
+        loss = args.loss,
     )
     flow_wrapper.to(device)
     
