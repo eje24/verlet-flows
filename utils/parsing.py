@@ -49,7 +49,7 @@ def parse_args(manual_args=None):
         default=20,
         help="Patience of the LR scheduler",
     )
-    parser.add_argument("--lr", type=float, default=1e-2, help="Initial learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate")
     parser.add_argument(
         "--restart_lr",
         type=float,
@@ -64,14 +64,73 @@ def parse_args(manual_args=None):
         "--num_train", type=int, default=4096, help="Size of training set"
     )
     parser.add_argument(
-        "--num_val", type=int, default=50, help="Size of validation set"
+        "--num_val", type=int, default=1024, help="Size of validation set"
     )
     parser.add_argument(
-        "--num_integrator_steps", type=int, default=15, help="Number of integrator steps"
+        "--num_integrator_steps", type=int, default=8, help="Number of integrator steps"
     )
-    # GMM argument
     parser.add_argument(
-        "--nmodes", type=int, default=3, help="Number of modes in the GMM"
+        "--loss", type=str, default="likelihood_loss", help="Loss function to use"
+    )
+    # Flow arguments
+    parser.add_argument(
+        "--source", type=str, default="gaussian", help="Type of flow to use"
+    )
+    parser.add_argument(
+        "--target", type=str, default="gmm", help="Target distribution"
+    )
+    parser.add_argument(
+        "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
+    )
+    parser.add_argument(
+        "--num_vp_hidden_units", type=int, default=30, help="Number of hidden units"
+    )
+    parser.add_argument(
+        "--num_nvp_hidden_layers", type=int, default=10, help="Number of hidden layers"
+    )
+    parser.add_argument(
+        "--num_nvp_hidden_units", type=int, default=60, help="Number of hidden units"
+    )
+    # Source Gaussian arguments
+    parser.add_argument(
+        "--source_gaussian_mean", type=float, default=0.0, help="Mean of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_xvar", type=float, default=1.0, help="x variance of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_yvar", type=float, default=1.0, help="y variance of the source Gaussian"
+    )
+    parser.add_argument(
+        "--source_gaussian_xyvar", type=float, default=0.0, help="xy covariance of the source Gaussian"
+    )
+    # Source GMM argument
+    parser.add_argument(
+        "--source_nmodes", type=int, default=2, help="Number of modes in the source GMM"
+    )
+
+    # Target Gaussian arguments
+    parser.add_argument(
+        "--target_gaussian_mean", type=float, default=1.0, help="Mean of the target Gaussian"
+    )
+    parser.add_argument(
+        "--target_gaussian_xvar", type=float, default=4.0, help="x variance of the target Gaussian"
+    )
+    parser.add_argument(
+        "--target_gaussian_yvar", type=float, default=1.0, help="y variance of the target Gaussian"
+    )
+    parser.add_argument(
+        "--target_gaussian_xyvar", type=float, default=1.0, help="xy covariance of the target Gaussian"
+    )
+
+    # Target GMM argument
+    parser.add_argument(
+        "--target_nmodes", type=int, default=3, help="Number of modes in the target GMM"
+    )
+
+    # Target Funnel argument
+    parser.add_argument(
+        "--funnel_dim", type=int, default=2, help="Dimension of the funnel"
     )
 
     args = (

@@ -11,8 +11,7 @@ import torch
 # torch.multiprocessing.set_sharing_strategy("file_system")
 
 from utils.parsing import display_args, parse_args
-from model.flow import FlowWrapper, VerletFlow
-from datasets.dist import GMM, Gaussian, VerletGaussian, VerletGMM
+from model.flow import default_flow_wrapper
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64000, rlimit[1]))
@@ -66,6 +65,7 @@ def train_epoch(flow_wrapper, optimizer, device, num_train, batch_size, num_inte
         optimizer.zero_grad()
         try:
             loss = flow_wrapper(batch_size, num_integrator_steps)
+            torch.nn.utils.clip_grad_norm_(flow_wrapper.parameters(), 1.0)
             loss.backward()
             optimizer.step()
             meter.add([loss.cpu().detach()])
@@ -151,6 +151,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
             factor=0.7,
             patience=args.scheduler_patience,
             min_lr=args.lr / 100,
+            verbose=True,
         )
     else:
         print("No scheduler")
@@ -160,7 +161,7 @@ def get_optimizer_and_scheduler(args, model, scheduler_mode="min"):
 
 
 def get_model(args, device):
-    return FlowWrapper.default_flow_wrapper(args, device)
+    return default_flow_wrapper(args, device)
 
 
 def train(args, flow_wrapper, optimizer, scheduler, run_dir):
@@ -190,18 +191,22 @@ def train(args, flow_wrapper, optimizer, scheduler, run_dir):
         if val_losses["loss"] <= best_val_loss:
             best_val_loss = val_losses["loss"]
             best_epoch = epoch
-            torch.save(state_dict, os.path.join(run_dir, "best_model.pt"))
-
+            torch.save(
+                {
+                    "model": state_dict,
+                    "args": args,
+                },
+                os.path.join(run_dir, "best_model.pt"),
+            )
         if scheduler:
-            if args.val_inference_freq is not None:
-                scheduler.step(best_val_inference_value)
-            else:
+                print('scheduler step')
                 scheduler.step(val_losses["loss"])
 
         torch.save(
             {
                 "epoch": epoch,
                 "model": state_dict,
+                "args": args,
                 "optimizer": optimizer.state_dict(),
             },
             os.path.join(run_dir, "last_model.pt"),
