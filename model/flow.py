@@ -347,19 +347,19 @@ class FlowWrapper(nn.Module):
 def build_source(args, device) -> Sampleable:
     source = None
     if args.source == 'gmm':
-        q_sampleable = GMM(device=device, nmode=args.source_nmodes, xlim=1.0, scale=0.5)
-        p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        q_dist = GMM(device=device, nmode=args.source_nmodes, xlim=1.0, scale=0.5)
+        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         source = VerletGMM(
-            q_density = q_sampleable,
-            p_density = p_sampleable,
+            q_dist = q_dist,
+            p_dist = p_dist,
             t = 0.0
         )
     elif args.source == 'gaussian':
-        q_sampleable = Gaussian(args.source_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.source_gaussian_xvar, args.source_gaussian_xyvar], [args.source_gaussian_xyvar, args.source_gaussian_yvar]], device=device))
-        p_sampleable = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        q_dist = Gaussian(args.source_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.source_gaussian_xvar, args.source_gaussian_xyvar], [args.source_gaussian_xyvar, args.source_gaussian_yvar]], device=device))
+        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         source = VerletGaussian(
-            q_sampleable = q_sampleable,
-            p_sampleable = p_sampleable,
+            q_dist = q_dist,
+            p_dist = p_dist,
             t = 0.0
         )
     else:
@@ -369,19 +369,19 @@ def build_source(args, device) -> Sampleable:
 def build_target(args, device) -> Density:
     target = None
     if args.target == 'gmm':
-        q_density = GMM(device=device, nmode=args.target_nmodes, xlim=1.0, scale=0.5)
-        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        q_dist = GMM(device=device, nmode=args.target_nmodes, xlim=1.0, scale=0.5)
+        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGMM(
-            q_density = q_density,
-            p_density = p_density,
+            q_dist = q_dist,
+            p_dist = p_dist,
             t = 1.0
         )
     elif args.target == 'gaussian':
-        q_density = Gaussian(args.target_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
-        p_density = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
+        q_dist = Gaussian(args.target_gaussian_mean + torch.zeros(2, device=device), torch.tensor([[args.target_gaussian_xvar, args.target_gaussian_xyvar], [args.target_gaussian_xyvar, args.target_gaussian_yvar]], device=device))
+        p_dist = Gaussian(torch.zeros(2, device=device), torch.eye(2, device=device))
         target = VerletGaussian(
-            q_sampleable = q_density,
-            p_sampleable = p_density,
+            q_dist = q_dist,
+            p_dist = p_dist,
             t = 1.0
         )
     else:
