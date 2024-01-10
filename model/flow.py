@@ -1,3 +1,5 @@
+from abc import ABC, abstractmethod
+
 import matplotlib.pyplot as plt
 import math
 
@@ -20,9 +22,14 @@ class FlowTrajectory:
         self.flow_logp: Optional[torch.Tensor] = None
 
 
+class Flow(ABC):
+    @abstractmethod
+    def get_flow(self, data: VerletData) -> Tuple[torch.Tensor, torch.Tensor]:
+        pass
+
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
-class VerletFlow(nn.Module):
+class VerletFlow(Flow, nn.Module):
     def __init__(self, data_dim, num_vp_hidden, num_nvp_hidden, num_vp_layers, num_nvp_layers):
         super().__init__()
         self._data_dim = data_dim
@@ -97,10 +104,11 @@ class VerletFlow(nn.Module):
         return dq, dp
 
 
-class VerletIntegrator():
-    def __init__(self):
-        pass
+class Integrator(ABC):
+    pass
 
+
+class VerletIntegrator(Integrator):
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     def integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
         dlogp = torch.zeros((data.batch_size,), device=data.device)
@@ -192,13 +200,13 @@ class VerletIntegrator():
 
 # Transforms a distribution "latent" to an (unnormalized) density "data"
 class FlowWrapper(nn.Module):
-    def __init__(self, device, flow: VerletFlow, source: Sampleable, target: Density, loss = 'likelihood_loss'):
+    def __init__(self, device, flow: Flow, integrator: Integrator, source: Sampleable, target: Density, loss: str):
         super().__init__()
         self._flow = flow
         self._source = source
         self._target = target
-        self._integrator = VerletIntegrator()
         self._device = device
+        self._integrator = integrator
 
         # Set loss function
         self._loss_fn = None
@@ -346,6 +354,21 @@ class FlowWrapper(nn.Module):
         self.load_state_dict(torch.load(filename))
 
 # Utilities for generating and loading FlowWrapper objects
+def build_flow(args, device) -> Flow:
+    flow = None
+    if args.verlet:
+        flow = VerletFlow(args.data_dim, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
+    else:
+        raise ValueError('Only VerletFlow supported')
+    return flow
+
+def build_integrator(args, device) -> Integrator:
+    integrator = None
+    if args.verlet:
+        integrator = VerletIntegrator()
+    else:
+        raise ValueError('Only VerletIntegrator supported')
+    return integrator
 
 def build_source(args, device) -> Sampleable:
     source = None
@@ -412,7 +435,8 @@ def build_target(args, device) -> Density:
 
 def default_flow_wrapper(args, device) -> FlowWrapper:
     # Initialize model
-    verlet_flow = VerletFlow(args.data_dim, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
+    flow = build_flow(args, device)
+    integrator = build_integrator(args, device)
 
     # Initialize source and target
     source = build_source(args, device)
@@ -421,7 +445,8 @@ def default_flow_wrapper(args, device) -> FlowWrapper:
     # Initialize flow wrapper
     flow_wrapper = FlowWrapper(
         device = device,
-        flow = verlet_flow,
+        flow = flow,
+        integrator = integrator,
         source = source,
         target = target,
         loss = args.loss,

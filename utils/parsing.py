@@ -74,6 +74,9 @@ def parse_args(manual_args=None):
     )
     # Flow arguments
     parser.add_argument(
+        "--verlet", type=bool, default=True, help="Whether to use VerletFlow"
+    )
+    parser.add_argument(
         "--source", type=str, default="gaussian", help="Type of flow to use"
     )
     parser.add_argument(
@@ -82,6 +85,7 @@ def parse_args(manual_args=None):
     parser.add_argument(
         "--data_dim", type=int, default=2, help="Dimension of the q distributions"
     )
+    # VerletFlow-specific arguments
     parser.add_argument(
         "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
     )
