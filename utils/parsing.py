@@ -42,7 +42,7 @@ def parse_args(manual_args=None):
         "--n_epochs", type=int, default=25, help="Number of epochs for training"
     )
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
-    parser.add_argument("--scheduler", type=str, default=None, help="LR scheduler")
+    parser.add_argument("--scheduler", type=str, default="plateau", help="LR scheduler")
     parser.add_argument(
         "--scheduler_patience",
         type=int,

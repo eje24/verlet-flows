@@ -7,6 +7,7 @@ from typing import Tuple, List, Optional
 import numpy as np
 
 
+from model.ot import verlet_emd_reorder
 from datasets.dist import Sampleable, Density, GMM, Gaussian, Funnel, VerletGaussian, VerletGMM, VerletFunnel
 from datasets.verlet import VerletData
 from utils.parsing import display_args
@@ -205,6 +206,8 @@ class FlowWrapper(nn.Module):
             self._loss_fn = self.likelihood_loss
         elif loss == 'reverse_kl_loss':
             self._loss_fn = self.reverse_kl_loss
+        elif loss == 'flow_matching_loss':
+            self._loss_fn = self.flow_matching_loss
         else:
             raise ValueError(f"Unknown loss function {loss}")
 
@@ -263,10 +266,12 @@ class FlowWrapper(nn.Module):
         flow_logp = trajectory.flow_logp
         return -torch.mean(source_logp + flow_logp)
 
-    def flow_matching_loss(self, batch_size):
+    def flow_matching_loss(self, batch_size, num_steps):
         # Sample from source and target
         source_data = self._source.sample(batch_size)
         target_data = self._target.sample(batch_size)
+        # Reorder to minimize Earth Mover's Distance (OT)
+        source_data, target_data = verlet_emd_reorder(source_data, target_data)
         # Interploate
         t = torch.rand((batch_size,1), device=source_data.device)
         interpolated_data = VerletData.interpolate(source_data, target_data, t)
@@ -299,7 +304,7 @@ class FlowWrapper(nn.Module):
 
         fix, axs = plt.subplots(1, num_steps, figsize=(10, 10))
         for t in range(num_steps):
-            dq, _ = self._flow.get_flow(VerletData(qxy, torch.zeros_like(qxy, device=self._device), t / num_steps))
+            dq, _ = self._flow.get_flow(VerletData(qxy, torch.zeros_like(qxy, device=self._device), t / num_steps * torch.ones_like(qxy[:,0], device=self._device)))
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
             axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
             axs[t].set_aspect('equal', 'box')

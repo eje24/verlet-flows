@@ -5,12 +5,13 @@ random_number=$RANDOM
 
 # Call the Python script with all parameters inline
 python train.py \
---run_name=gaussian2gaussian_$random_number \
+--run_name=flow_matching_$random_number \
 --source=gaussian \
---target=gaussian \
---batch_size=256 \
---n_epochs=20 \
+--target=gmm\
+--target_nmodes=3
+--loss=flow_matching_loss
+--n_epochs=50 \
 --loss=reverse_kl_loss \
+--batch_size=64
 --lr=0.01 \
 --scheduler=plateau \
-

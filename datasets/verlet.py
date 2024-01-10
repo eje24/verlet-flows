@@ -15,6 +15,17 @@ class VerletData(_VerletData):
 
     def set_time(self, t: float):
         return VerletData(self.q, self.p, t)
+
+    def get_combined(self):
+        return torch.cat([self.q, self.p], dim=1)
+
+    @staticmethod
+    def from_combined(combined: torch.Tensor, t: float):
+        dim = combined.size()[1] // 2
+        q = combined[:, :dim]
+        p = combined[:, dim:]
+        t = t * torch.ones((combined.size()[0], 1), device=combined.device)
+        return VerletData(q, p, t)
     
     @staticmethod
     def interpolate(data1: 'VerletData', data2: 'VerletData', alpha: torch.Tensor):
@@ -23,4 +34,5 @@ class VerletData(_VerletData):
             p = data1.p * (1 - alpha) + data2.p * alpha,
             t = data1.t * (1 - alpha) + data2.t * alpha
         )
+    
     
