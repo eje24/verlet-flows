@@ -7,11 +7,10 @@ random_number=$RANDOM
 python train.py \
 --run_name=flow_matching_$random_number \
 --source=gaussian \
---target=gmm\
---target_nmodes=3
---loss=flow_matching_loss
+--target=gmm \
+--target_nmodes=3 \
+--loss=flow_matching_loss \
 --n_epochs=50 \
---loss=reverse_kl_loss \
---batch_size=64
+--batch_size=64 \
 --lr=0.01 \
 --scheduler=plateau \
