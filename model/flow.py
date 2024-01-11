@@ -27,6 +27,36 @@ class Flow(ABC):
     def get_flow(self, data: VerletData) -> Tuple[torch.Tensor, torch.Tensor]:
         pass
 
+    def _create_net(self, in_dims, out_dims, num_hidden_units, num_hidden_layers):
+        # Contruct sequence of dimensions
+        dim_list = [in_dims] + [num_hidden_units for _ in range(num_hidden_layers)] + [out_dims]
+        # Construct network layers
+        net_list = []
+        for i in range(len(dim_list) - 1):
+            curr_dim, next_dim = dim_list[i], dim_list[i+1]
+            net_list.append(nn.Linear(curr_dim, next_dim))
+            # Don't add a SELU after the last linear layer
+            if i < len(dim_list) - 2:
+                net_list.append(nn.SELU())
+        return nn.Sequential(*net_list)
+
+class NonVerletFlow(Flow, nn.Module):
+    def __init__(self, data_dim, num_hidden, num_layers):
+        super().__init__()
+        self._data_dim = data_dim
+        self._num_hidden = num_hidden
+        self._num_layers = num_layers
+
+        # Initialize layers
+        self._net = self._create_net(2 * data_dim + 1, 2 * data_dim, num_hidden, num_layers)
+
+    def get_flow(self, data: VerletData):
+        # Concatenate q and time
+        qpt = data.get_qpt()
+        d_qp = self._net(qpt)
+        d_q, d_p = d_qp[:, :self._data_dim], d_qp[:, self._data_dim:]
+        return d_q, d_p
+
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(Flow, nn.Module):
@@ -41,20 +71,6 @@ class VerletFlow(Flow, nn.Module):
         self._q_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
         self._p_vp_net = self._create_net(data_dim + 1, data_dim, num_vp_hidden, num_vp_layers)
         self._p_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
-
-    def _create_net(self, in_dims, out_dims, num_hidden_units, num_hidden_layers):
-        # Contruct sequence of dimensions
-        dim_list = [in_dims] + [num_hidden_units for _ in range(num_hidden_layers)] + [out_dims]
-        # Construct network layers
-        net_list = []
-        for i in range(len(dim_list) - 1):
-            curr_dim, next_dim = dim_list[i], dim_list[i+1]
-            net_list.append(nn.Linear(curr_dim, next_dim))
-            # Don't add a SELU after the last linear layer
-            if i < len(dim_list) - 2:
-                net_list.append(nn.SELU())
-        return nn.Sequential(*net_list)
-
     # Below functions all return the vector field contribution, as well as the log Jacobian determinant of the transformation
 
     # Volume preserving component of q-update
@@ -311,8 +327,11 @@ class FlowWrapper(nn.Module):
         qxy = torch.tensor(np.stack([QX.reshape(-1), QY.reshape(-1)]).T, dtype=torch.float32, device='cuda')
 
         fix, axs = plt.subplots(1, num_steps, figsize=(10, 10))
+        t_base = torch.ones(bins ** 2, 1, device=self._device)
+        p = torch.zeros_like(qxy, device=self._device)
         for t in range(num_steps):
-            dq, _ = self._flow.get_flow(VerletData(qxy, torch.zeros_like(qxy, device=self._device), t / num_steps * torch.ones_like(qxy[:,0], device=self._device)))
+            data = VerletData(qxy, p, t / num_steps * t_base)
+            dq, _ = self._flow.get_flow(data)
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
             axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
             axs[t].set_aspect('equal', 'box')
@@ -359,7 +378,7 @@ def build_flow(args, device) -> Flow:
     if args.verlet:
         flow = VerletFlow(args.data_dim, args.num_vp_hidden_units, args.num_nvp_hidden_units, args.num_vp_hidden_layers, args.num_nvp_hidden_layers)
     else:
-        raise ValueError('Only VerletFlow supported')
+        flow = NonVerletFlow(args.data_dim, 50, 10)
     return flow
 
 def build_integrator(args, device) -> Integrator:
@@ -367,7 +386,8 @@ def build_integrator(args, device) -> Integrator:
     if args.verlet:
         integrator = VerletIntegrator()
     else:
-        raise ValueError('Only VerletIntegrator supported')
+        pass
+        # raise Warning('Non-Verlet integrator not implemented yet')
     return integrator
 
 def build_source(args, device) -> Sampleable:
@@ -464,11 +484,3 @@ def load_saved(path) -> FlowWrapper:
     return flow_wrapper
 
     
-        
-
-
-
-
-
-
-

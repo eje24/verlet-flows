@@ -1,5 +1,6 @@
 # from https://github.com/gcorso/DiffDock/blob/main/utils/parsing.py
 import logging
+import argparse
 from argparse import Namespace, ArgumentParser, FileType
 
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +75,7 @@ def parse_args(manual_args=None):
     )
     # Flow arguments
     parser.add_argument(
-        "--verlet", type=bool, default=True, help="Whether to use VerletFlow"
+        "--verlet", type=bool, default=True, action=argparse.BooleanOptionalAction, help="Use VerletFlow and VerletIntegrator"
     )
     parser.add_argument(
         "--source", type=str, default="gaussian", help="Type of flow to use"

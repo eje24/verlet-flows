@@ -22,8 +22,8 @@ def emd_reorder(xs, xt):
     return fix_points(xs, xt, emd_matrix)
 
 def verlet_emd_reorder(data_s, data_t):
-    xs = data_s.get_combined()
-    xt = data_t.get_combined()
+    xs = data_s.get_qp()
+    xt = data_t.get_qp()
     xsc, xtc = emd_reorder(xs, xt)
-    return VerletData.from_combined(xsc, data_s.t), VerletData.from_combined(xtc, data_t.t)
+    return VerletData.from_qp(xsc, data_s.t), VerletData.from_qp(xtc, data_t.t)
 

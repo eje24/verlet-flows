@@ -10,6 +10,7 @@ python train.py \
 --target=gmm \
 --target_nmodes=3 \
 --loss=flow_matching_loss \
+--no-verlet \
 --n_epochs=50 \
 --batch_size=64 \
 --lr=0.01 \

@@ -16,15 +16,18 @@ class VerletData(_VerletData):
     def set_time(self, t: float):
         return VerletData(self.q, self.p, t)
 
-    def get_combined(self):
+    def get_qp(self):
         return torch.cat([self.q, self.p], dim=1)
 
+    def get_qpt(self):
+        return torch.cat([self.q, self.p, self.t], dim=1)
+
     @staticmethod
-    def from_combined(combined: torch.Tensor, t: float):
-        dim = combined.size()[1] // 2
-        q = combined[:, :dim]
-        p = combined[:, dim:]
-        t = t * torch.ones((combined.size()[0], 1), device=combined.device)
+    def from_qp(qp: torch.Tensor, t: float):
+        dim = qp.size()[1] // 2
+        q = qp[:, :dim]
+        p = qp[:, dim:]
+        t = t * torch.ones((qp.size()[0], 1), device=qp.device)
         return VerletData(q, p, t)
     
     @staticmethod
