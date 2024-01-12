@@ -7,10 +7,9 @@ random_number=$RANDOM
 python train.py \
 --run_name=flow_matching_$random_number \
 --source=gaussian \
---target=gmm \
---target_nmodes=3 \
+--target=gaussian \
 --loss=flow_matching_loss \
---no-verlet \
+--verlet \
 --n_epochs=50 \
 --batch_size=64 \
 --lr=0.01 \

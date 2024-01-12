@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 
 import matplotlib.pyplot as plt
 import math
 
 import torch.nn as nn
 import torch
+from torchdyn.numerics import odeint
 from typing import Tuple, List, Optional
 import numpy as np
 
@@ -25,6 +27,11 @@ class FlowTrajectory:
 class Flow(ABC):
     @abstractmethod
     def get_flow(self, data: VerletData) -> Tuple[torch.Tensor, torch.Tensor]:
+        pass
+
+    # Allows for numerical integration of the flow
+    @abstractmethod
+    def forward(self, t: float, qp: torch.Tensor) -> torch.Tensor:
         pass
 
     def _create_net(self, in_dims, out_dims, num_hidden_units, num_hidden_layers):
@@ -56,6 +63,12 @@ class NonVerletFlow(Flow, nn.Module):
         d_qp = self._net(qpt)
         d_q, d_p = d_qp[:, :self._data_dim], d_qp[:, self._data_dim:]
         return d_q, d_p
+
+    def forward(self, t: float, qp: torch.Tensor):
+        # Get data in tensor format
+        t = t * torch.ones((qp.size()[0], 1), device=qp.device)
+        qpt = torch.cat([qp, t], dim=1)
+        return self._net(qpt)
 
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
@@ -119,12 +132,49 @@ class VerletFlow(Flow, nn.Module):
         dp = p_vp + p_nvp
         return dq, dp
 
+    def forward(self, t: float, qp: torch.Tensor):
+        data = VerletData.from_qp(qp, t)
+        dq, dp = self.get_flow(data)
+        return torch.cat((dq, dp), dim=1)
 
 class Integrator(ABC):
     pass
 
+class NumericIntegrator(Integrator):
+    def __init__(self):
+        # This parameter indicates whether integrating populates the flow_logp property of the trajectory
+        # Trace integration not implemented yet
+        self.supports_likelihood = False
+
+    @torch.no_grad()
+    def integrate(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> VerletData:
+        # Extract state from VerletData wrapper
+        qp0 = data.get_qp()
+        timesteps = torch.linspace(0, 1, num_steps + 1)
+        # Perform numeric integration
+        _, qp1 = odeint(flow, qp0, timesteps, solver='tsit5')
+        # Package into trajectory
+        for i in range(1, num_steps + 1):
+            new_data = VerletData.from_qp(qp1[i], float(i / num_steps))
+            trajectory.trajectory.append(new_data)
+        # Mark flow
+        trajectory.flow_logp = None
+        return VerletData.from_qp(qp1[-1], 1.0), trajectory
+
+    @torch.no_grad()
+    def reverse_integrate(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> VerletData:
+        raise NotImplementedError
+
+    def asert_consistency(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> None:
+        raise NotImplementedError
+
+
 
 class VerletIntegrator(Integrator):
+    def __init__(self):
+        # This parameter indicates whether integrating populates the flow_logp property of the trajectory
+        self.supports_likelihood = True
+
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     def integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
         dlogp = torch.zeros((data.batch_size,), device=data.device)
@@ -216,24 +266,25 @@ class VerletIntegrator(Integrator):
 
 # Transforms a distribution "latent" to an (unnormalized) density "data"
 class FlowWrapper(nn.Module):
-    def __init__(self, device, flow: Flow, integrator: Integrator, source: Sampleable, target: Density, loss: str):
+    def __init__(self, device, flow: Flow, integrator: Integrator, source: Sampleable, target: Density, args):
         super().__init__()
         self._flow = flow
         self._source = source
         self._target = target
         self._device = device
         self._integrator = integrator
+        self._init_args = args
 
         # Set loss function
         self._loss_fn = None
-        if loss == 'likelihood_loss':
+        if args.loss == 'likelihood_loss':
             self._loss_fn = self.likelihood_loss
-        elif loss == 'reverse_kl_loss':
+        elif args.loss == 'reverse_kl_loss':
             self._loss_fn = self.reverse_kl_loss
-        elif loss == 'flow_matching_loss':
+        elif args.loss == 'flow_matching_loss':
             self._loss_fn = self.flow_matching_loss
         else:
-            raise ValueError(f"Unknown loss function {loss}")
+            raise ValueError(f"Unknown loss function {args.loss}")
 
     def source_to_target(self, data: VerletData, num_steps) -> Tuple[VerletData, FlowTrajectory]:
         # Prepare trajectory
@@ -253,6 +304,7 @@ class FlowWrapper(nn.Module):
         raise NotImplementedError
 
     def reverse_kl_loss(self, batch_size, num_steps) -> torch.Tensor:
+        assert self._integrator.supports_likelihood, "Reverse KL loss requires integrator to support likelihood"
         data, trajectory = self.sample(batch_size, num_steps)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         target_logp = self._target.get_density(data)
@@ -278,6 +330,7 @@ class FlowWrapper(nn.Module):
         return -torch.mean(source_logp)
 
     def likelihood_loss(self, batch_size, num_steps):
+        assert self._integrator.supports_likelihood, "Likelihood loss requires integrator to support likelihood"
         # Sample from target
         data = self._target.sample(batch_size)
         data = data.set_time(torch.ones_like(data.t, device=data.device))
@@ -312,6 +365,11 @@ class FlowWrapper(nn.Module):
         # return self.reverse_kl_loss(batch_size, num_steps)
         # return self.flow_matching_loss(batch_size)
         return self._loss_fn(batch_size, num_steps)
+
+    def set_integrator(self, integrator: Integrator):
+        if not self._init_args.verlet and isinstance(integrator, VerletIntegrator):
+            raise ValueError("Cannot use Verlet integrator with non-Verlet flow")
+        self._integrator = integrator
 
     # Non training-related functions
     def assert_consistency(self, batch_size, num_steps):
@@ -353,15 +411,22 @@ class FlowWrapper(nn.Module):
         
 
     @torch.no_grad()
-    def graph_time_marginals(self, num_samples, num_steps, xlim=-3, ylim=3):
-        data, trajectory = self.sample(num_samples, num_steps)
-        num_marginals = num_steps + 1
+    def graph_time_marginals(self, num_samples, num_marginals, num_integrator_steps, xlim=-3, ylim=3):
+        data, trajectory = self.sample(num_samples, num_integrator_steps)
+        # Compute marginals
+        marginal_idxs = []
+        for i in range(0, num_marginals - 1):
+            idx = int(i / (num_marginals - 1) * num_integrator_steps)
+            marginal_idxs.append(idx)
+        marginal_idxs.append(num_integrator_steps)
+        # Plot marginals
         fig, axs = plt.subplots(1, num_marginals, figsize=(10, 10))
         for i in range(num_marginals):
-            samples = trajectory.trajectory[i].q.detach().cpu().numpy()
+            idx = marginal_idxs[i]
+            samples = trajectory.trajectory[idx].q.detach().cpu().numpy()
             axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
             axs[i].set_aspect('equal', 'box')
-            axs[i].set_title('t = ' + str(i / num_steps))
+            axs[i].set_title('t = ' + str(idx / num_integrator_steps))
             axs[i].set_xlim(-xlim, xlim)
             axs[i].set_ylim(-ylim, ylim)
         plt.subplots_adjust(wspace=1.0)
@@ -386,8 +451,7 @@ def build_integrator(args, device) -> Integrator:
     if args.verlet:
         integrator = VerletIntegrator()
     else:
-        pass
-        # raise Warning('Non-Verlet integrator not implemented yet')
+        integrator = NumericIntegrator()
     return integrator
 
 def build_source(args, device) -> Sampleable:
@@ -469,11 +533,22 @@ def default_flow_wrapper(args, device) -> FlowWrapper:
         integrator = integrator,
         source = source,
         target = target,
-        loss = args.loss,
+        args = args
     )
     flow_wrapper.to(device)
     
     return flow_wrapper
+
+def print_model_size(model):
+    param_size = 0
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+    buffer_size = 0
+    for buffer in model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+
+    size_all_mb = (param_size + buffer_size) / 1024**2
+    print('model size: {:.3f}MB'.format(size_all_mb))
 
 def load_saved(path) -> FlowWrapper:
     saved_dict = torch.load(path)
@@ -481,6 +556,7 @@ def load_saved(path) -> FlowWrapper:
     display_args(args)
     flow_wrapper = default_flow_wrapper(args, args.device)
     flow_wrapper.load_state_dict(saved_dict['model'])
+    print_model_size(flow_wrapper)
     return flow_wrapper
 
     
