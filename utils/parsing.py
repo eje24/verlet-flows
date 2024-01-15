@@ -88,16 +88,16 @@ def parse_args(manual_args=None):
     )
     # VerletFlow-specific arguments
     parser.add_argument(
-        "--num_vp_hidden_layers", type=int, default=15, help="Number of hidden layers"
+        "--num_vp_hidden_layers", type=int, default=5, help="Number of hidden layers"
     )
     parser.add_argument(
-        "--num_vp_hidden_units", type=int, default=30, help="Number of hidden units"
+        "--num_vp_hidden_units", type=int, default=50, help="Number of hidden units"
     )
     parser.add_argument(
-        "--num_nvp_hidden_layers", type=int, default=10, help="Number of hidden layers"
+        "--num_nvp_hidden_layers", type=int, default=5, help="Number of hidden layers"
     )
     parser.add_argument(
-        "--num_nvp_hidden_units", type=int, default=60, help="Number of hidden units"
+        "--num_nvp_hidden_units", type=int, default=50, help="Number of hidden units"
     )
     # Source Gaussian arguments
     parser.add_argument(
