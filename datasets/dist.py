@@ -21,14 +21,26 @@ class Sampleable(ABC):
 # Based on https://github.com/qsh-zh/pis/blob/master/src/datamodules/datasets/ps.py#L90
 class GMM(Density, Sampleable):
     def __init__(self, device, nmode=3, xlim = 3.0, scale = 0.15):
-        mix = D.Categorical(torch.ones(nmode).to(device))
+        self.weights = torch.ones(nmode).to(device)
         angles = np.linspace(0, 2 * np.pi, nmode+1)[:-1]
         np_loc = xlim * np.stack([np.cos(angles), np.sin(angles)]).T
-        loc = torch.tensor(np_loc, dtype = torch.float).to(device)
-        dist = D.Normal(loc, torch.ones(size=(nmode, 2), device=device) * scale * xlim)
-        comp = D.Independent(dist, 1)
+        self.loc = torch.tensor(np_loc, dtype = torch.float).to(device)
+        self.gmm_cov = torch.ones(size=(nmode, 2), device=device) * scale * xlim
         self.device = device
-        self.gmm = D.MixtureSameFamily(mix, comp)
+        self.gmm = self.create_gmm(self.weights, self.loc, self.gmm_cov)
+
+    def create_gmm(self, weights, loc, gmm_cov):
+        mix = D.Categorical(weights)
+        dist = D.Normal(loc, gmm_cov)
+        comp = D.Independent(dist, 1)
+        return D.MixtureSameFamily(mix, comp)
+
+    def to(self, device):
+        self.device = device
+        self.loc = self.loc.to(device)
+        self.weights = self.weights.to(device)
+        self.gmm_cov = self.gmm_cov.to(device)
+        self.gmm = self.create_gmm(self.weights, self.loc, self.gmm_cov)
 
     def get_density(self, x):
         return self.gmm.log_prob(x)
@@ -69,6 +81,9 @@ class Gaussian(Sampleable):
         self.gaussian = D.MultivariateNormal(mean, cov)
         self.dim = mean.shape[0]
 
+    def to(self, device):
+        self.gaussian = D.MultivariateNormal(self.mean.to(device), self.cov.to(device))
+
     def sample(self, n):
         return self.gaussian.sample((n,))
 
@@ -102,6 +117,9 @@ class Funnel(Sampleable, Density):
     def __init__(self, device, dim=10):
         assert dim > 1
         self.dim = dim
+        self.device = device
+
+    def to(self, device):
         self.device = device
 
     def sample(self, n):
@@ -161,6 +179,11 @@ class VerletGMM(Density):
         self.p_dist = p_dist
         self.t = t
 
+    def to(self, device):
+        self.q_dist.to(device)
+        self.p_dist.to(device)
+        return self
+
     def sample(self, n):
         q = self.q_dist.sample(n)
         p = self.p_dist.sample(n)
@@ -178,6 +201,11 @@ class VerletGaussian(Sampleable, Density):
         self.p_dist = p_dist
         self.t = t
 
+    def to(self, device):
+        self.q_dist.to(device)
+        self.p_dist.to(device)
+        return self
+
     def sample(self, n):
         q = self.q_dist.sample(n)
         p = self.p_dist.sample(n)
@@ -194,6 +222,11 @@ class VerletFunnel(Sampleable, Density):
         self.q_dist = q_dist
         self.p_dist = p_dist
         self.t = t
+
+    def to(self, device):
+        self.q_dist.to(device)
+        self.p_dist.to(device)
+        return self
 
     def sample(self, n):
         q = self.q_dist.sample(n)

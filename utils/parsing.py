@@ -12,6 +12,58 @@ def display_args(args: Namespace):
         arg_value = getattr(args, arg_name)
         logging.info(f"{arg_name}: {arg_value}")
 
+def parse_cnf_args(manual_args = None):
+    parser = argparse.ArgumentParser()
+    # General
+    parser.add_argument('--run_name', type=str, default='2d_cnf')
+    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--num_train', type=int, default=4096)
+    parser.add_argument('--batch_size', type=int, default=256)
+    # Flow
+    parser.add_argument('--num_hidden_units', type=int, default=16)
+    parser.add_argument('--num_timesteps', type=int, default=25)
+    # Source
+    parser.add_argument('--source', type=str, default='gaussian')
+    parser.add_argument('--source_nmode', type=int, default=2)
+    # Target
+    parser.add_argument('--target', type=str, default='gmm')
+    parser.add_argument('--target_nmode', type=int, default=3)
+    args = (
+        parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
+    )
+    return args
+
+def parse_phase_space_cnf_args(manual_args = None):
+    parser = argparse.ArgumentParser()
+    # General
+    parser.add_argument('--run_name', type=str, default='verlet_cnf')
+    parser.add_argument('--num_epochs', type=int, default=40)
+    parser.add_argument('--num_train', type=int, default=4096)
+    parser.add_argument('--batch_size', type=int, default=256)
+    # Flow Type
+    parser.add_argument(
+        "--verlet", type=bool, default=True, action=argparse.BooleanOptionalAction, help="Use VerletFlow and VerletIntegrator"
+    )
+    # Non-Verlet Flow
+    parser.add_argument('--num_hidden_units', type=int, default=16)
+    parser.add_argument('--num_layers', type=int, default=3)
+    # Verlet Flow
+    parser.add_argument('--num_vp_hidden', type=int, default=16)
+    parser.add_argument('--num_vp_layers', type=int, default=3)
+    parser.add_argument('--num_nvp_hidden', type=int, default=16)
+    parser.add_argument('--num_nvp_layers', type=int, default=3)
+    # Integrator
+    parser.add_argument('--num_timesteps', type=int, default=25)
+    # Source
+    parser.add_argument('--source', type=str, default='gaussian')
+    parser.add_argument('--source_nmode', type=int, default=2)
+    # Target
+    parser.add_argument('--target', type=str, default='gmm')
+    parser.add_argument('--target_nmode', type=int, default=2)
+    args = (
+        parser.parse_args() if manual_args is None else parser.parse_args(manual_args)
+    )
+    return args
 
 def parse_args(manual_args=None):
     # General arguments
