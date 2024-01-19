@@ -20,6 +20,7 @@ def parse_cnf_args(manual_args = None):
     parser.add_argument('--num_train', type=int, default=4096)
     parser.add_argument('--batch_size', type=int, default=256)
     # Flow
+    parser.add_argument('--residual', type=bool, default=True, action=argparse.BooleanOptionalAction)
     parser.add_argument('--num_hidden_units', type=int, default=16)
     parser.add_argument('--num_timesteps', type=int, default=25)
     # Source
