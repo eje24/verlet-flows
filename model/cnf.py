@@ -14,7 +14,7 @@ from torchdyn.models import CNF as CNFWrapper
 sys.path.append('../')
 from datasets.dist import Gaussian, GMM, Funnel, VerletGMM, VerletGaussian, VerletFunnel
 from datasets.verlet import VerletData
-from model.flow import VerletFlow, NonVerletFlow
+from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow
 
 # DATASETS
 
@@ -63,6 +63,33 @@ class VerletDataset(data.Dataset):
         x = x.get_qp()
         return torch.cat([logp, t0, x], dim=1)
 
+# Based off of FFJORD's CNF
+class TorchdynTimeFlow(nn.Module):
+    def __init__(self, num_hidden_units):
+        super().__init__()
+        self.linear1 = nn.Linear(3, num_hidden_units)
+        self.linear2 = nn.Linear(num_hidden_units+1, num_hidden_units)
+        self.linear3 = nn.Linear(num_hidden_units+1, num_hidden_units)
+        self.linear4 = nn.Linear(num_hidden_units+1, 2)
+
+    def forward(self, x):
+        t = x[:, :1]
+        x = x[:, 1:]
+        x = torch.cat([x, t], dim=1)
+        x = self.linear1(x)
+        x = F.selu(x)
+        x = torch.cat([x, t], dim=1)
+        x = self.linear2(x)
+        x = F.selu(x)
+        x = torch.cat([x, t], dim=1)
+        x = self.linear3(x)
+        x = F.selu(x)
+        x = torch.cat([x, t], dim=1)
+        dx = self.linear4(x)
+        dt = torch.ones_like(t).to(x)
+        return torch.cat([dt, dx], dim=1)
+
+
 # torchdyn-compatible flow
 class TorchdynFlow(nn.Module):
     def __init__(self, num_hidden_units):
@@ -106,8 +133,10 @@ class CNF(pl.LightningModule):
         self.t_span = torch.linspace(0.0, 1.0, self.args.num_timesteps)
 
         # Initialize model
-        # self.flow = TorchdynFlow(self.args.num_hidden_units)
-        self.flow = TorchdynFlow(args.num_hidden_units)
+        if self.args.use_time:
+            self.flow = TorchdynTimeFlow(self.args.num_hidden_units)
+        else:
+            self.flow = TorchdynFlow(self.args.num_hidden_units)
         self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
 
         # Initialize source, target, train
@@ -239,7 +268,8 @@ class PhaseSpaceCNF(pl.LightningModule):
                                  num_vp_layers=self.args.num_vp_layers,
                                  num_nvp_layers=self.args.num_nvp_layers)
         else:
-            flow = NonVerletFlow(data_dim=2, num_hidden=self.args.num_hidden_units, num_layers=self.args.num_layers)
+            flow = NonVerletTimeFlow(data_dim=2, num_hidden=self.args.num_hidden_units, num_layers=self.args.num_layers)
+            # flow = NonVerletFlow(data_dim=2, num_hidden=self.args.num_hidden_units, num_layers=self.args.num_layers)
         print(f'Flow is : {flow}')
         self.flow = TorchdynPhaseFlow(flow)
         self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
@@ -285,7 +315,8 @@ class PhaseSpaceCNF(pl.LightningModule):
         self.train_losses = []
         
         # Initialize source, target, train
-        self.trainloader = data.DataLoader(self.target_set, batch_size=self.args.batch_size, shuffle=True)
+        self.train_loader = data.DataLoader(self.target_set, batch_size=self.args.batch_size, shuffle=True)
+        self.val_loader = data.DataLoader(self.target_set, batch_size=self.args.batch_size, shuffle=True)
 
     def forward(self, x):
         return self.model(x)
@@ -317,6 +348,7 @@ class PhaseSpaceCNF(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss = self.compute_data_loss(batch)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         self.train_losses.append(loss)
         return {'loss': loss}
 
@@ -326,11 +358,20 @@ class PhaseSpaceCNF(pl.LightningModule):
         self.train_losses = []
         print(f"Device {self.device} | Epoch {self.current_epoch} | Train Loss: {avg_loss}")
 
+    def validation_step(self, batch, batch_idx):
+        loss = self.compute_data_loss(batch)
+        self.log("val_loss", loss)
+        return {'val_los': loss}
+
+
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=0.01)
 
     def train_dataloader(self):
-        return self.trainloader
+        return self.train_loader
+
+    def val_dataloader(self):
+        return self.val_loader
 
     # Utility functions
     def graph(self, trajectory):

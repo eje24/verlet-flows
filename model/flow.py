@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import math
 
 import torch.nn as nn
+import torch.nn.functional as F
 import torch
 from torchdyn.numerics import odeint
 from typing import Tuple, List, Optional
@@ -69,6 +70,36 @@ class NonVerletFlow(Flow, nn.Module):
         t = t * torch.ones((qp.size()[0], 1), device=qp.device)
         qpt = torch.cat([qp, t], dim=1)
         return self._net(qpt)
+
+class NonVerletTimeFlow(nn.Module):
+    def __init__(self, data_dim, num_hidden, num_layers):
+        super().__init__()
+        self._data_dim = data_dim
+        # Initialize modules
+        module_list = []
+        module_list.append(nn.Linear(2 * data_dim + 1, num_hidden))
+        for _ in range(num_layers - 1):
+            module_list.append(nn.Linear(num_hidden + 1, num_hidden))
+        module_list.append(nn.Linear(num_hidden + 1, 2 * data_dim))
+        self._layers = nn.ModuleList(module_list)
+
+    def get_flow(self, data: VerletData):
+        # Concatenate q and time
+        d_qp = self.forward(data)
+        d_q, d_p = d_qp[:, :self._data_dim], d_qp[:, self._data_dim:]
+        return d_q, d_p
+
+    def forward(self, data: VerletData):
+        # Concatenate q and time
+        x = data.get_qp()
+        t = data.t
+        for idx, layer in enumerate(self._layers):
+            x = torch.cat((x, t), dim=1)
+            x = layer(x)
+            if idx < len(self._layers) - 1:
+                x = F.selu(x)
+        return x
+
 
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482

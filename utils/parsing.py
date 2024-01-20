@@ -20,8 +20,8 @@ def parse_cnf_args(manual_args = None):
     parser.add_argument('--num_train', type=int, default=4096)
     parser.add_argument('--batch_size', type=int, default=256)
     # Flow
-    parser.add_argument('--residual', type=bool, default=True, action=argparse.BooleanOptionalAction)
-    parser.add_argument('--num_hidden_units', type=int, default=16)
+    parser.add_argument('--use_time', type=bool, default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument('--num_hidden_units', type=int, default=64)
     parser.add_argument('--num_timesteps', type=int, default=25)
     # Source
     parser.add_argument('--source', type=str, default='gaussian')
@@ -46,7 +46,7 @@ def parse_phase_space_cnf_args(manual_args = None):
         "--verlet", type=bool, default=True, action=argparse.BooleanOptionalAction, help="Use VerletFlow and VerletIntegrator"
     )
     # Non-Verlet Flow
-    parser.add_argument('--num_hidden_units', type=int, default=16)
+    parser.add_argument('--num_hidden_units', type=int, default=64)
     parser.add_argument('--num_layers', type=int, default=3)
     # Verlet Flow
     parser.add_argument('--num_vp_hidden', type=int, default=16)
