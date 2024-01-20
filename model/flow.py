@@ -55,17 +55,32 @@ class NonVerletFlow(Flow, nn.Module):
         qpt = torch.cat([qp, t], dim=1)
         return self._net(qpt)
 
+# Adds time as an input to the network at each layer, as in FFJORD
+class TimeInjectionNet(nn.Module):
+    def __init__(self, in_dim, out_dim, num_hidden, num_layers):
+        super().__init__()
+        # Initialize modules
+        module_list = []
+        module_list.append(nn.Linear(in_dim + 1, num_hidden))
+        for _ in range(num_layers - 1):
+            module_list.append(nn.Linear(num_hidden + 1, num_hidden))
+        module_list.append(nn.Linear(num_hidden + 1, out_dim))
+        self._layers = nn.ModuleList(module_list)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor):
+        # Concatenate q and time
+        for idx, layer in enumerate(self._layers):
+            x = torch.cat((x, t), dim=1)
+            x = layer(x)
+            if idx < len(self._layers) - 1:
+                x = F.selu(x)
+        return x
+
 class NonVerletTimeFlow(nn.Module):
     def __init__(self, data_dim, num_hidden, num_layers):
         super().__init__()
         self._data_dim = data_dim
-        # Initialize modules
-        module_list = []
-        module_list.append(nn.Linear(2 * data_dim + 1, num_hidden))
-        for _ in range(num_layers - 1):
-            module_list.append(nn.Linear(num_hidden + 1, num_hidden))
-        module_list.append(nn.Linear(num_hidden + 1, 2 * data_dim))
-        self._layers = nn.ModuleList(module_list)
+        self._net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
 
     def get_flow(self, data: VerletData):
         # Concatenate q and time
@@ -77,13 +92,7 @@ class NonVerletTimeFlow(nn.Module):
         # Concatenate q and time
         x = data.get_qp()
         t = data.t
-        for idx, layer in enumerate(self._layers):
-            x = torch.cat((x, t), dim=1)
-            x = layer(x)
-            if idx < len(self._layers) - 1:
-                x = F.selu(x)
-        return x
-
+        return self._net(x, t)
 
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
@@ -95,24 +104,21 @@ class VerletFlow(Flow, nn.Module):
         self._num_nvp_hidden = num_nvp_hidden
 
         # Initialize layers
-        self._q_vp_net = self._create_net(data_dim + 1, data_dim, num_vp_hidden, num_vp_layers)
-        self._q_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
-        self._p_vp_net = self._create_net(data_dim + 1, data_dim, num_vp_hidden, num_vp_layers)
-        self._p_nvp_net = self._create_net(data_dim + 1, data_dim * data_dim, num_nvp_hidden, num_nvp_layers)
+        self._q_vp_net = TimeInjectionNet(data_dim, data_dim, num_vp_hidden, num_vp_layers)
+        self._q_nvp_net = TimeInjectionNet(data_dim, data_dim ** 2, num_nvp_hidden, num_nvp_layers)
+        self._p_vp_net = TimeInjectionNet(data_dim, data_dim, num_vp_hidden, num_vp_layers)
+        self._p_nvp_net = TimeInjectionNet(data_dim, data_dim ** 2, num_nvp_hidden, num_nvp_layers)
     # Below functions all return the vector field contribution, as well as the log Jacobian determinant of the transformation
 
     # Volume preserving component of q-update
     def q_vp(self, data: VerletData):
-        # Concatenate p and time
-        x = torch.cat((data.p, data.t), dim=1)
-        return self._q_vp_net(x)
+        return self._q_vp_net(data.p, data.t)
         
     # Non-volume preserving component of q-update
     # Returns: q_nvp_matrix, q_nvp
     def q_nvp(self, data: VerletData):
-        x = torch.cat((data.p, data.t), dim=1)
         # Get matrix
-        q_nvp_matrix = self._q_nvp_net(x)
+        q_nvp_matrix = self._q_nvp_net(data.p, data.t)
         # Reshape to matrix
         q_nvp_matrix = q_nvp_matrix.view(data.batch_size, self._data_dim, self._data_dim)
 
@@ -121,16 +127,13 @@ class VerletFlow(Flow, nn.Module):
     # Volume preserving component of p-update
     # Returns p_vp
     def p_vp(self, data: VerletData):
-        # Concatenate q and time
-        x = torch.cat((data.q, data.t), dim=1)
-        return self._p_vp_net(x)
+        return self._p_vp_net(data.q, data.t)
 
     # Non-volume preserving component of p-update
     # Returns p_vp_matrix, p_vp
     def p_nvp(self, data: VerletData):
-        x = torch.cat((data.q, data.t), dim=1)
         # Get matrix
-        p_nvp_matrix = self._p_nvp_net(x)
+        p_nvp_matrix = self._p_nvp_net(data.q, data.t)
         # Reshape to matrix
         p_nvp_matrix = p_nvp_matrix.view(data.batch_size, self._data_dim, self._data_dim)
 

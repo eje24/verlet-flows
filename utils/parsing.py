@@ -49,9 +49,9 @@ def parse_phase_space_cnf_args(manual_args = None):
     parser.add_argument('--num_hidden_units', type=int, default=64)
     parser.add_argument('--num_layers', type=int, default=3)
     # Verlet Flow
-    parser.add_argument('--num_vp_hidden', type=int, default=16)
+    parser.add_argument('--num_vp_hidden', type=int, default=64)
     parser.add_argument('--num_vp_layers', type=int, default=3)
-    parser.add_argument('--num_nvp_hidden', type=int, default=16)
+    parser.add_argument('--num_nvp_hidden', type=int, default=64)
     parser.add_argument('--num_nvp_layers', type=int, default=3)
     # Integrator
     parser.add_argument('--num_timesteps', type=int, default=25)

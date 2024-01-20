@@ -6,12 +6,13 @@ from lightning.pytorch.loggers import WandbLogger
 
 sys.path.append('../')
 from model.cnf import PhaseSpaceCNF
-from utils.parsing import parse_phase_space_cnf_args
+from utils.parsing import parse_phase_space_cnf_args, display_args
 
 PROJECT_NAME = 'verlet-flows'
 
 def main():
     args = parse_phase_space_cnf_args()
+    display_args(args)
 
     # Initialize flow
     cnf = PhaseSpaceCNF(args)
