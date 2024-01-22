@@ -2,6 +2,8 @@ import os
 import sys
 
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -32,8 +34,23 @@ def main(cfg: DictConfig) -> None:
         save_dir='workdir',
     )
 
+    # Initialize checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join('workdir', cfg.run_name),
+        filename='{epoch:02d}-{val_loss:.2f}',
+        save_top_k=1,
+        verbose=True,
+        monitor='val_loss',
+        every_n_epochs=cfg.training.val_every_n_epochs,
+        mode='min',
+    )
+
     # Initialize trainer
-    trainer = pl.Trainer(logger=wandb_logger, min_epochs=cfg.training.num_epochs, max_epochs=cfg.training.num_epochs)
+    trainer = pl.Trainer(logger=wandb_logger, 
+                         min_epochs=cfg.training.num_epochs, 
+                         max_epochs=cfg.training.num_epochs, 
+                         check_val_every_n_epoch=cfg.training.val_every_n_epochs,
+                         callbacks=[checkpoint_callback])
     trainer.fit(model)
 
     # Save

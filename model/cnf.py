@@ -325,7 +325,7 @@ class PhaseSpaceCNF(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss = self.compute_data_loss(batch)
         self.log("val_loss", loss)
-        return {'val_los': loss}
+        return {'val_loss': loss}
 
 
     def configure_optimizers(self):

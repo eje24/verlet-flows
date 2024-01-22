@@ -3,4 +3,5 @@ num_epochs: 80
 num_train: 4096
 num_val: 1024
 batch_size: 256
+val_every_n_epochs: 3
 num_timesteps: 25
