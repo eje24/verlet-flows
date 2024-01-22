@@ -4,6 +4,7 @@ import torch
 import torch.distributions as D
 import numpy as np
 import matplotlib.pyplot as plt
+from omegaconf import DictConfig
 
 from datasets.verlet import VerletData
 
@@ -17,9 +18,12 @@ class Sampleable(ABC):
     def sample(self, n):
         pass
 
+class Distribution(Density, Sampleable):
+    pass
+
 
 # Based on https://github.com/qsh-zh/pis/blob/master/src/datamodules/datasets/ps.py#L90
-class GMM(Density, Sampleable):
+class GMM(Distribution):
     def __init__(self, device, nmode=3, xlim = 3.0, scale = 0.15):
         self.weights = torch.ones(nmode).to(device)
         angles = np.linspace(0, 2 * np.pi, nmode+1)[:-1]
@@ -74,7 +78,7 @@ class GMM(Density, Sampleable):
         plt.show()
 
 
-class Gaussian(Sampleable):
+class Gaussian(Distribution):
     def __init__(self, mean, cov):
         self.mean = mean
         self.cov = cov
@@ -113,7 +117,7 @@ class Gaussian(Sampleable):
         # Show the plot
         plt.show()
 
-class Funnel(Sampleable, Density):
+class Funnel(Distribution):
     def __init__(self, device, dim=10):
         assert dim > 1
         self.dim = dim
@@ -239,5 +243,42 @@ class VerletFunnel(Sampleable, Density):
         p = self.p_dist.get_density(data.p)
         return q + p
 
+class AugmentedDistribution(Distribution):
+    def __init__(self, q_dist: Density, p_dist: Density, t: float = 1.0):
+        self.q_dist = q_dist
+        self.p_dist = p_dist
+        self.t = t
+
+    def to(self, device):
+        self.q_dist.to(device)
+        self.p_dist.to(device)
+        return self
+
+    def sample(self, n):
+        q = self.q_dist.sample(n)
+        p = self.p_dist.sample(n)
+        t = self.t * torch.ones((n,1), device=q.device)
+        return VerletData(q, p, t)
+
+    def get_density(self, data: VerletData):
+        q = self.q_dist.get_density(data.q)
+        p = self.p_dist.get_density(data.p)
+        return q + p
+
+def build_augmented_distribution(cfg: DictConfig, device, t: float = 1.0) -> AugmentedDistribution:
+    p_dist = Gaussian(torch.zeros(cfg.dim), torch.eye(cfg.dim))
+    if cfg.distribution == 'gaussian':
+        q_dist = Gaussian(torch.zeros(cfg.dim), torch.eye(cfg.dim))
+    elif cfg.distribution == 'gmm':
+        q_dist = GMM(device, nmode=cfg.nmode)
+    elif cfg.distribution == 'funnel':
+        q_dist = Funnel(device, dim=cfg.dim)
+    elif cfg.distribution == 'weird_gaussian':
+        q_dist = Gaussian(2.0 * torch.ones(2, device=device), torch.tensor([[5.0, 2.0], [2.0, 1.0]], device=device))
+    elif cfg.distribution == 'weird_gmm':
+        raise NotImplementedError
+    elif cfg.distribution == 'lgcp':
+        raise NotImplementedError
+    return AugmentedDistribution(q_dist, p_dist, t=t)
 
 

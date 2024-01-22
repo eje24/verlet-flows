@@ -1,0 +1,3 @@
+# Non-isotropic Gaussian
+distribution: weird_gaussian
+dim: 2

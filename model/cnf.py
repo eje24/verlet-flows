@@ -10,11 +10,12 @@ import pytorch_lightning as pl
 
 from torchdyn.core import NeuralODE
 from torchdyn.models import CNF as CNFWrapper
+from omegaconf import DictConfig
 
 sys.path.append('../')
-from datasets.dist import Gaussian, GMM, Funnel, VerletGMM, VerletGaussian, VerletFunnel
+from datasets.dist import Gaussian, GMM, Funnel, build_augmented_distribution
 from datasets.verlet import VerletData
-from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow
+from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow, build_augmented_flow
 
 # DATASETS
 
@@ -252,61 +253,24 @@ class CNF(pl.LightningModule):
 
 # TODO: Reduce redundancy between CNF and VerletCNF
 class PhaseSpaceCNF(pl.LightningModule):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, cfg: DictConfig):
         super().__init__()
-        self.args = args
+        self.cfg = cfg
         self.save_hyperparameters()
 
         # Initialize timespan
-        self.t_span = torch.linspace(0.0, 1.0, self.args.num_timesteps)
+        self.t_span = torch.linspace(0.0, 1.0, self.cfg.training.num_timesteps)
 
         # Initialize model
-        if self.args.verlet:
-            flow = VerletFlow(data_dim=2,
-                                 num_vp_hidden=self.args.num_vp_hidden,
-                                 num_nvp_hidden=self.args.num_nvp_hidden,
-                                 num_vp_layers=self.args.num_vp_layers,
-                                 num_nvp_layers=self.args.num_nvp_layers)
-        else:
-            flow = NonVerletTimeFlow(data_dim=2, num_hidden=self.args.num_hidden_units, num_layers=self.args.num_layers)
-            # flow = NonVerletFlow(data_dim=2, num_hidden=self.args.num_hidden_units, num_layers=self.args.num_layers)
-        print(f'Flow is : {flow}')
+        flow = build_augmented_flow(self.cfg.flow)
         self.flow = TorchdynPhaseFlow(flow)
         self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
 
         # Initialize source, target, train
-        self.source = self.build_source(self.args)
-        self.target = self.build_target(self.args)
-        self.source_set = VerletDataset(self.source, self.args.num_train)
-        self.target_set = VerletDataset(self.target, self.args.num_train)
-
-    def build_source(self, args):
-        if args.source == 'gaussian':
-            q_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            p_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            return VerletGaussian(q_dist, p_dist, t=1.0)
-        elif args.source == 'gmm':
-            q_dist = GMM(nmode=args.source_nmode, device=self.device)
-            p_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            return VerletGMM(q_dist, p_dist, t=1.0)
-        else:
-            raise NotImplementedError
-
-    def build_target(self, args):
-        if args.target == 'gaussian':
-            q_dist = Gaussian(2.0 * torch.ones(2, device=self.device), torch.tensor([[5.0, 2.0], [2.0, 1.0]], device=self.device))
-            p_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            return VerletGaussian(q_dist, p_dist, t=0.0)
-        elif args.target == 'gmm':
-            q_dist = GMM(nmode=args.target_nmode, device=self.device)
-            p_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            return VerletGMM(q_dist, p_dist, t=0.0)
-        elif args.target == 'funnel':
-            q_dist = Funnel(device=self.device, dim=2)
-            p_dist = Gaussian(torch.zeros(2, device=self.device), torch.eye(2, device=self.device))
-            return VerletFunnel(q_dist, p_dist, t=0.0)
-        else:
-            raise NotImplementedError
+        self.source = build_augmented_distribution(self.cfg.source, self.device, 1.0)
+        self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
+        self.source_set = VerletDataset(self.source, self.cfg.training.num_train)
+        self.target_set = VerletDataset(self.target, self.cfg.training.num_train)
 
     def setup(self, stage):
         # Update devices
@@ -315,8 +279,8 @@ class PhaseSpaceCNF(pl.LightningModule):
         self.train_losses = []
         
         # Initialize source, target, train
-        self.train_loader = data.DataLoader(self.target_set, batch_size=self.args.batch_size, shuffle=True)
-        self.val_loader = data.DataLoader(self.target_set, batch_size=self.args.batch_size, shuffle=True)
+        self.train_loader = data.DataLoader(self.target_set, batch_size=self.cfg.training.batch_size, shuffle=True)
+        self.val_loader = data.DataLoader(self.target_set, batch_size=self.cfg.training.batch_size, shuffle=True)
 
     def forward(self, x):
         return self.model(x)

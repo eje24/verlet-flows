@@ -4,7 +4,7 @@
 random_number=$RANDOM
 
 # Call the Python script with all parameters inline
-python train.py \
+python old_train.py \
 --run_name=gaussian2funnel_$random_number \
 --source=gaussian \
 --target=funnel \

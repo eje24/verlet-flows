@@ -1,0 +1,7 @@
+flow_type: verlet
+dim: 2
+num_vp_layers: 3
+num_nvp_layers: 3
+num_vp_hidden: 64
+num_nvp_hidden: 64
+sparse: false

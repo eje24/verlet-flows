@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchdiffeq import odeint
+from omegaconf import DictConfig
 
 from datasets.verlet import VerletData
 
@@ -154,3 +155,18 @@ class VerletFlow(Flow, nn.Module):
         data = VerletData.from_qp(qp, t)
         dq, dp = self.get_flow(data)
         return torch.cat((dq, dp), dim=1)
+
+def build_augmented_flow(cfg: DictConfig) -> Flow:
+    if cfg.flow_type == 'verlet':
+        flow = VerletFlow(data_dim=cfg.dim,
+                             num_vp_hidden=cfg.num_vp_hidden,
+                             num_nvp_hidden=cfg.num_nvp_hidden,
+                             num_vp_layers=cfg.num_vp_layers,
+                             num_nvp_layers=cfg.num_nvp_layers)
+    elif cfg.flow_type == 'non_verlet':
+        flow = NonVerletTimeFlow(data_dim=cfg.dim, 
+                                 num_hidden=cfg.num_hidden_units, 
+                                 num_layers=cfg.num_layers)
+    else:
+        raise ValueError(f'Invalid flow type: {cfg.flow_type}')
+    return flow
