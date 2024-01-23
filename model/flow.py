@@ -95,6 +95,12 @@ class NonVerletTimeFlow(nn.Module):
         t = data.t
         return self._net(x, t)
 
+    def wrap_for_integration(self, integrator: str):
+        if integrator == 'verlet':
+            raise ValueError('NonVerletTimeFlow cannot be used with Verlet integrator')
+        elif integrator == 'numeric':
+            return TorchdynAugmentedFlowWrapper(self)
+
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(Flow, nn.Module):
@@ -155,6 +161,27 @@ class VerletFlow(Flow, nn.Module):
         data = VerletData.from_qp(qp, t)
         dq, dp = self.get_flow(data)
         return torch.cat((dq, dp), dim=1)
+
+    def wrap_for_integration(self, integrator: str):
+        if integrator == 'verlet':
+            return self
+        elif integrator == 'numeric':
+            return TorchdynAugmentedFlowWrapper(self)
+
+# Flow Wrappers
+class TorchdynAugmentedFlowWrapper(nn.Module):
+    def __init__(self, flow):
+        super().__init__()
+        self.flow = flow
+
+    def forward(self, x):
+        t = x[:, :1]
+        q = x[:, 1:3]
+        p = x[:, 3:]
+        data = VerletData(q, p, t)
+        dq, dp = self.flow.get_flow(data)
+        dt = torch.ones_like(t).to(x)
+        return torch.cat([dt, dq, dp], dim=1)
 
 def build_augmented_flow(cfg: DictConfig) -> Flow:
     if cfg.flow_type == 'verlet':

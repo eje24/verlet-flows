@@ -86,7 +86,9 @@ class Gaussian(Distribution):
         self.dim = mean.shape[0]
 
     def to(self, device):
-        self.gaussian = D.MultivariateNormal(self.mean.to(device), self.cov.to(device))
+        self.mean = self.mean.to(device)
+        self.cov = self.cov.to(device)
+        self.gaussian = D.MultivariateNormal(self.mean, self.cov)
 
     def sample(self, n):
         return self.gaussian.sample((n,))

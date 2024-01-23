@@ -15,7 +15,8 @@ from omegaconf import DictConfig
 sys.path.append('../')
 from datasets.dist import Gaussian, GMM, Funnel, build_augmented_distribution
 from datasets.verlet import VerletData
-from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow, build_augmented_flow
+from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow, TorchdynAugmentedFlowWrapper, build_augmented_flow
+from model.wrapper import AugmentedWrapper
 
 # DATASETS
 
@@ -108,20 +109,6 @@ class TorchdynFlow(nn.Module):
             dt = torch.ones_like(x[:,:1])
             dx = self.f(x)
             return torch.cat([dt, dx], dim=1)
-
-class TorchdynPhaseFlow(nn.Module):
-    def __init__(self, phase_flow):
-        super().__init__()
-        self.flow = phase_flow
-
-    def forward(self, x):
-        t = x[:, :1]
-        q = x[:, 1:3]
-        p = x[:, 3:]
-        data = VerletData(q, p, t)
-        dq, dp = self.flow.get_flow(data)
-        dt = torch.ones_like(t).to(x)
-        return torch.cat([dt, dq, dp], dim=1)
 
 
 # Time-dependent continuous normalizing flow
@@ -263,7 +250,7 @@ class PhaseSpaceCNF(pl.LightningModule):
 
         # Initialize model
         flow = build_augmented_flow(self.cfg.flow)
-        self.flow = TorchdynPhaseFlow(flow)
+        self.flow = TorchdynAugmentedFlowWrapper(flow)
         self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
 
         # Initialize source, target, train
@@ -271,6 +258,12 @@ class PhaseSpaceCNF(pl.LightningModule):
         self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
         self.source_set = VerletDataset(self.source, self.cfg.training.num_train)
         self.target_set = VerletDataset(self.target, self.cfg.training.num_train)
+
+    def align_devices(self):
+        self.source.to(self.device)
+        self.target.to(self.device)
+        self.model.to(self.device)
+
 
     def setup(self, stage):
         # Update devices
@@ -349,16 +342,19 @@ class PhaseSpaceCNF(pl.LightningModule):
     def graph_marginals(self, num_marginals=5, N=10000):
         X_test = self.source_set.sample(N, t=1.0)
         t_span = torch.linspace(1.0, 0.0, num_marginals)
-        t_eval, trajectory = self.model(X_test.cpu(), t_span.cpu())
+        t_eval, trajectory = self.model(X_test.to(self.device), t_span.to(self.device))
         trajectory = trajectory.detach().cpu().numpy()
         self.graph(trajectory)
 
     def graph_backwards_marginals(self, num_marginals=5, N=10000):
         X_target = self.target_set.sample(N, t=0.0)
         t_span = torch.linspace(0.0, 1.0, num_marginals)
-        t_eval, trajectory = self.model(X_target.cpu(), t_span.cpu())
+        t_eval, trajectory = self.model(X_target.to(self.device), t_span.to(self.device))
         trajectory = trajectory.detach().cpu().numpy()
         self.graph(trajectory)
+
+    def export_to_wrapper(self):
+        return AugmentedWrapper(self.source, self.target, self.flow.flow)
 
     @staticmethod
     def load_saved(self, path):

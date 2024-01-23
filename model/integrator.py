@@ -4,9 +4,10 @@ import math
 
 import torch
 from torchdiffeq import odeint
+from torchdyn.models import NeuralODE, CNF as CNFWrapper
 
 from datasets.verlet import VerletData
-from model.flow import Flow, VerletFlow
+from model.flow import Flow, VerletFlow, TorchdynAugmentedFlowWrapper
 
 class FlowTrajectory:
     def __init__(self):
@@ -19,32 +20,33 @@ class Integrator(ABC):
 
 class NumericIntegrator(Integrator):
     def __init__(self):
-        # This parameter indicates whether integrating populates the flow_logp property of the trajectory
-        # Trace integration not implemented yet
-        self.supports_likelihood = False
+        pass
 
     @torch.no_grad()
-    def integrate(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> VerletData:
-        # Extract state from VerletData wrapper
-        qp0 = data.get_qp()
-        timesteps = torch.linspace(0, 1, num_steps + 1)
-        # Perform numeric integration
-        _, qp1 = odeint(flow, qp0, timesteps, solver='tsit5')
-        # Package into trajectory
-        for i in range(1, num_steps + 1):
-            new_data = VerletData.from_qp(qp1[i], float(i / num_steps))
+    def integrate(self, flow: TorchdynAugmentedFlowWrapper, data: VerletData, trajectory: FlowTrajectory, num_steps: int, reverse=False) -> VerletData:
+        ode = NeuralODE(CNFWrapper(flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
+        t_span = torch.linspace(1.0, 0.0, num_steps + 1)
+        # Augment data with time and concatenate logp and time
+        data = data.get_qp()
+        logp = torch.zeros((data.size()[0], 1), device=data.device)
+        if reverse:
+            # Target to sample
+            t = torch.zeros((data.size()[0], 1), device=data.device)
+            t_span = torch.linspace(0.0, 1.0, num_steps + 1)
+        else:
+            # Sample to target
+            t = torch.ones((data.size()[0], 1), device=data.device)
+            t_span = torch.linspace(1.0, 0.0, num_steps + 1)
+        data = torch.cat([logp, t, data], dim=1)
+        # Integrate
+        _, traj = ode(data, t_span)
+        # Put trajectory into AugmentedFlowTrajectory
+        for t in range(1, num_steps + 1):
+            new_data = VerletData.from_qp(traj[t, :, 2:], float(t / num_steps))
             trajectory.trajectory.append(new_data)
-        # Mark flow
-        trajectory.flow_logp = None
-        return VerletData.from_qp(qp1[-1], 1.0), trajectory
-
-    @torch.no_grad()
-    def reverse_integrate(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> VerletData:
-        raise NotImplementedError
-
-    def asert_consistency(self, flow: Flow, data: VerletData, trajectory: FlowTrajectory, num_steps: int) -> None:
-        raise NotImplementedError
-
+        # Get flow logp
+        trajectory.flow_logp = traj[-1][:,0]
+        return trajectory.trajectory[-1], trajectory
 
 
 class VerletIntegrator(Integrator):
@@ -140,4 +142,12 @@ class VerletIntegrator(Integrator):
         # Assert that flow logp matches
         assert torch.allclose(forward_trajectory.flow_logp, reverse_trajectory.flow_logp, atol=1e-7), f"forward_trajectory.flow_logp = {forward_trajectory.flow_logp}, reverse_trajectory.flow_logp = {reverse_trajectory.flow_logp}"
         print("Consistency check passed")
+
+def build_integrator(integrator: str, **kwargs) -> Integrator:
+    if integrator == 'verlet':
+        return VerletIntegrator()
+    elif integrator == 'numeric':
+        return NumericIntegrator()
+    else:
+        raise ValueError(f"Unknown integrator {integrator}")
 
