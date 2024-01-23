@@ -102,7 +102,7 @@ class AugmentedWrapper:
         plt.show()
 
     @torch.no_grad()
-    def graph_end_marginals(self, n_samples, n_integrator_steps, xlim=-3, ylim=3):
+    def graph_end_marginals(self, n_samples, n_integrator_steps, xlim=3, ylim=3):
         data, trajectory = self.sample(n_samples, n_integrator_steps)
         samples = trajectory.trajectory[-1].q.detach().cpu().numpy()
         plt.hist2d(samples[:,0], samples[:,1], bins=300, density=True)
