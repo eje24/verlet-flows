@@ -8,11 +8,11 @@ import torch.nn.functional as F
 from torchdiffeq import odeint
 from omegaconf import DictConfig
 
-from datasets.verlet import VerletData
+from datasets.aug_data import AugmentedData
 
-class Flow(ABC):
+class AugmentedFlow(ABC):
     @abstractmethod
-    def get_flow(self, data: VerletData) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_flow(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
         pass
 
     # Allows for numerical integration of the flow
@@ -33,7 +33,7 @@ class Flow(ABC):
                 net_list.append(nn.SELU())
         return nn.Sequential(*net_list)
 
-class NonVerletFlow(Flow, nn.Module):
+class NonVerletFlow(AugmentedFlow, nn.Module):
     def __init__(self, data_dim, num_hidden, num_layers):
         super().__init__()
         self._data_dim = data_dim
@@ -43,7 +43,7 @@ class NonVerletFlow(Flow, nn.Module):
         # Initialize layers
         self._net = self._create_net(2 * data_dim + 1, 2 * data_dim, num_hidden, num_layers)
 
-    def get_flow(self, data: VerletData):
+    def get_flow(self, data: AugmentedData):
         # Concatenate q and time
         qpt = data.get_qpt()
         d_qp = self._net(qpt)
@@ -83,13 +83,13 @@ class NonVerletTimeFlow(nn.Module):
         self._data_dim = data_dim
         self._net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
 
-    def get_flow(self, data: VerletData):
+    def get_flow(self, data: AugmentedData):
         # Concatenate q and time
         d_qp = self.forward(data)
         d_q, d_p = d_qp[:, :self._data_dim], d_qp[:, self._data_dim:]
         return d_q, d_p
 
-    def forward(self, data: VerletData):
+    def forward(self, data: AugmentedData):
         # Concatenate q and time
         x = data.get_qp()
         t = data.t
@@ -103,7 +103,7 @@ class NonVerletTimeFlow(nn.Module):
 
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
-class VerletFlow(Flow, nn.Module):
+class VerletFlow(AugmentedFlow, nn.Module):
     def __init__(self, data_dim, num_vp_hidden, num_nvp_hidden, num_vp_layers, num_nvp_layers):
         super().__init__()
         self._data_dim = data_dim
@@ -118,12 +118,12 @@ class VerletFlow(Flow, nn.Module):
     # Below functions all return the vector field contribution, as well as the log Jacobian determinant of the transformation
 
     # Volume preserving component of q-update
-    def q_vp(self, data: VerletData):
+    def q_vp(self, data: AugmentedData):
         return self._q_vp_net(data.p, data.t)
         
     # Non-volume preserving component of q-update
     # Returns: q_nvp_matrix, q_nvp
-    def q_nvp(self, data: VerletData):
+    def q_nvp(self, data: AugmentedData):
         # Get matrix
         q_nvp_matrix = self._q_nvp_net(data.p, data.t)
         # Reshape to matrix
@@ -133,12 +133,12 @@ class VerletFlow(Flow, nn.Module):
 
     # Volume preserving component of p-update
     # Returns p_vp
-    def p_vp(self, data: VerletData):
+    def p_vp(self, data: AugmentedData):
         return self._p_vp_net(data.q, data.t)
 
     # Non-volume preserving component of p-update
     # Returns p_vp_matrix, p_vp
-    def p_nvp(self, data: VerletData):
+    def p_nvp(self, data: AugmentedData):
         # Get matrix
         p_nvp_matrix = self._p_nvp_net(data.q, data.t)
         # Reshape to matrix
@@ -146,7 +146,7 @@ class VerletFlow(Flow, nn.Module):
 
         return torch.clip(p_nvp_matrix, -20, 20)
 
-    def get_flow(self, data: VerletData):
+    def get_flow(self, data: AugmentedData):
         # Get q component
         q_vp, q_nvp_matrix = self.q_vp(data), self.q_nvp(data)
         q_nvp = torch.bmm(q_nvp_matrix, data.q.unsqueeze(2)).squeeze(2)
@@ -158,7 +158,7 @@ class VerletFlow(Flow, nn.Module):
         return dq, dp
 
     def forward(self, t: float, qp: torch.Tensor):
-        data = VerletData.from_qp(qp, t)
+        data = AugmentedData.from_qp(qp, t)
         dq, dp = self.get_flow(data)
         return torch.cat((dq, dp), dim=1)
 
@@ -178,12 +178,12 @@ class TorchdynAugmentedFlowWrapper(nn.Module):
         t = x[:, :1]
         q = x[:, 1:3]
         p = x[:, 3:]
-        data = VerletData(q, p, t)
+        data = AugmentedData(q, p, t)
         dq, dp = self.flow.get_flow(data)
         dt = torch.ones_like(t).to(x)
         return torch.cat([dt, dq, dp], dim=1)
 
-def build_augmented_flow(cfg: DictConfig) -> Flow:
+def build_augmented_flow(cfg: DictConfig) -> AugmentedFlow:
     if cfg.flow_type == 'verlet':
         flow = VerletFlow(data_dim=cfg.dim,
                              num_vp_hidden=cfg.num_vp_hidden,

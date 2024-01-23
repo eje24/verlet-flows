@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 
 sys.path.append('../')
 from datasets.dist import Gaussian, GMM, Funnel, build_augmented_distribution
-from datasets.verlet import VerletData
+from datasets.aug_data import AugmentedData
 from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow, TorchdynAugmentedFlowWrapper, build_augmented_flow
 from model.wrapper import AugmentedWrapper
 
@@ -42,7 +42,7 @@ class ToyDataset(data.Dataset):
         t0 = t * torch.ones(N,1).to(x)
         return torch.cat([logp, t0, x], dim=1)
 
-class VerletDataset(data.Dataset):
+class TorchdynAugmentedDataset(data.Dataset):
     def __init__(self, source, length):
         self.length = length
         self.source = source
@@ -239,7 +239,7 @@ class CNF(pl.LightningModule):
         return CNF.load_from_checkpoint(path)
 
 # TODO: Reduce redundancy between CNF and VerletCNF
-class PhaseSpaceCNF(pl.LightningModule):
+class AugmentedCNF(pl.LightningModule):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
@@ -256,8 +256,8 @@ class PhaseSpaceCNF(pl.LightningModule):
         # Initialize source, target, train
         self.source = build_augmented_distribution(self.cfg.source, self.device, 1.0)
         self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
-        self.source_set = VerletDataset(self.source, self.cfg.training.num_train)
-        self.target_set = VerletDataset(self.target, self.cfg.training.num_train)
+        self.source_set = TorchdynAugmentedDataset(self.source, self.cfg.training.num_train)
+        self.target_set = TorchdynAugmentedDataset(self.target, self.cfg.training.num_train)
 
     def align_devices(self):
         self.source.to(self.device)
@@ -282,7 +282,7 @@ class PhaseSpaceCNF(pl.LightningModule):
         _, trajectory = self.model(x0, self.t_span)
         x1 = trajectory[-1]
         flow_logp = x1[:, 0]
-        x1 = VerletData.from_qp(x1[:, 2:], t=1.0)
+        x1 = AugmentedData.from_qp(x1[:, 2:], t=1.0)
         source_logp = self.source.get_density(x1)
         return -torch.mean(source_logp - flow_logp)
 
@@ -292,13 +292,13 @@ class PhaseSpaceCNF(pl.LightningModule):
 
     def reverse_kl(self, num_timesteps = 25, N=10000):
         x1 = self.source_set.sample(N, t=1.0)
-        x1_data = VerletData.from_qp(x1[:,2:], t=1.0)
+        x1_data = AugmentedData.from_qp(x1[:,2:], t=1.0)
         source_logp = self.source.get_density(x1_data)
         t_span = torch.linspace(1.0, 0.0, num_timesteps)
         _, trajectory = self.model(x1, t_span)
         x0 = trajectory[-1] # select last point of solution trajectory
         flow_logp = x0[:,0]
-        x0 = VerletData.from_qp(x0[:,2:], 1.0)
+        x0 = AugmentedData.from_qp(x0[:,2:], 1.0)
         pushforward_logp = source_logp + flow_logp
         target_logp = self.target.get_density(x0)
         return torch.mean(pushforward_logp - target_logp)
@@ -358,4 +358,4 @@ class PhaseSpaceCNF(pl.LightningModule):
 
     @staticmethod
     def load_saved(self, path):
-        return PhaseSpaceCNF.load_from_checkpoint(path)
+        return AugmentedCNF.load_from_checkpoint(path)

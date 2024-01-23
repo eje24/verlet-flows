@@ -12,19 +12,15 @@ from typing import Tuple, List, Optional
 import numpy as np
 
 from model.ot import verlet_emd_reorder
-from model.integrator import Integrator, VerletIntegrator, NumericIntegrator, FlowTrajectory, build_integrator
-from model.flow import Flow, VerletFlow, NonVerletFlow, NonVerletTimeFlow
-from datasets.dist import Sampleable, Density, Distribution, GMM, Gaussian, Funnel, VerletGaussian, VerletGMM, VerletFunnel
-from datasets.verlet import VerletData
+from model.integrator import Integrator, VerletIntegrator, NumericIntegrator, AugmentedFlowTrajectory, build_integrator
+from model.flow import AugmentedFlow, VerletFlow, NonVerletFlow, NonVerletTimeFlow
+from datasets.dist import Sampleable, Density, Distribution, GMM, Gaussian, Funnel
+from datasets.aug_data import AugmentedData
 from utils.parsing import display_args
 
-# Temporary type-aliasing
-AugmentedData = VerletData
-AugmentedFlow = Flow
-AugmentedFlowTrajectory = FlowTrajectory
 
 class AugmentedWrapper:
-    def __init__(self, source: Distribution, target: Sampleable, flow: Flow):
+    def __init__(self, source: Distribution, target: Sampleable, flow: AugmentedFlow):
         self._source = source
         self._target = target
         self._flow = flow
@@ -40,7 +36,7 @@ class AugmentedWrapper:
         self._flow = self._flow.to(device)
         self._device = device
 
-    def integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[VerletData, FlowTrajectory]:
+    def integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         # Wrap flow if necessary to become compatible with integrator
         flow = self._flow.wrap_for_integration(integrator)
         # Initialize trajectory
@@ -52,7 +48,7 @@ class AugmentedWrapper:
         data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=False)
         return data, trajectory
 
-    def reverse_integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[VerletData, FlowTrajectory]:
+    def reverse_integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         # Wrap flow if necessary to become compatible with integrator
         flow = self._flow.wrap_for_integration(integrator)
         # Initialize trajectory
@@ -91,7 +87,7 @@ class AugmentedWrapper:
         t_base = torch.ones(bins ** 2, 1, device=self._device)
         p = torch.zeros_like(qxy, device=self._device)
         for t in range(n_marginals):
-            data = VerletData(qxy, p, t / n_marginals * t_base)
+            data = AugmentedData(qxy, p, t / n_marginals * t_base)
             dq, _ = self._flow.get_flow(data)
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
             axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])

@@ -6,12 +6,12 @@ import torch
 from torchdiffeq import odeint
 from torchdyn.models import NeuralODE, CNF as CNFWrapper
 
-from datasets.verlet import VerletData
-from model.flow import Flow, VerletFlow, TorchdynAugmentedFlowWrapper
+from datasets.aug_data import AugmentedData
+from model.flow import AugmentedFlow, VerletFlow, TorchdynAugmentedFlowWrapper
 
-class FlowTrajectory:
+class AugmentedFlowTrajectory:
     def __init__(self):
-        self.trajectory: List[VerletData] = list()
+        self.trajectory: List[AugmentedData] = list()
         self.source_logp: Optional[torch.Tensor] = None
         self.flow_logp: Optional[torch.Tensor] = None
 
@@ -23,7 +23,7 @@ class NumericIntegrator(Integrator):
         pass
 
     @torch.no_grad()
-    def integrate(self, flow: TorchdynAugmentedFlowWrapper, data: VerletData, trajectory: FlowTrajectory, num_steps: int, reverse=False) -> VerletData:
+    def integrate(self, flow: TorchdynAugmentedFlowWrapper, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int, reverse=False) -> AugmentedData:
         ode = NeuralODE(CNFWrapper(flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
         t_span = torch.linspace(1.0, 0.0, num_steps + 1)
         # Augment data with time and concatenate logp and time
@@ -40,9 +40,9 @@ class NumericIntegrator(Integrator):
         data = torch.cat([logp, t, data], dim=1)
         # Integrate
         _, traj = ode(data, t_span)
-        # Put trajectory into AugmentedFlowTrajectory
+        # Put trajectory into AugmentedAugmentedFlowTrajectory
         for t in range(1, num_steps + 1):
-            new_data = VerletData.from_qp(traj[t, :, 2:], float(t / num_steps))
+            new_data = AugmentedData.from_qp(traj[t, :, 2:], float(t / num_steps))
             trajectory.trajectory.append(new_data)
         # Get flow logp
         trajectory.flow_logp = traj[-1][:,0]
@@ -55,52 +55,52 @@ class VerletIntegrator(Integrator):
         self.supports_likelihood = True
 
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
-    def integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
+    def integrate_step(self, flow: VerletFlow, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.tensor]:
         dlogp = torch.zeros((data.batch_size,), device=data.device)
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
-        data = VerletData(data.q + dt * q_vp, data.p, data.t)
+        data = AugmentedData(data.q + dt * q_vp, data.p, data.t)
         # Non-volume-preserving q update
         q_nvp_matrix = flow.q_nvp(data)
         new_q = torch.bmm(torch.linalg.matrix_exp(dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
-        data = VerletData(new_q, data.p, data.t)
+        data = AugmentedData(new_q, data.p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
         # Volume-preserving p update
         p_vp = flow.p_vp(data)
-        data = VerletData(data.q, data.p + dt * p_vp, data.t)
+        data = AugmentedData(data.q, data.p + dt * p_vp, data.t)
         # Non-volume-preserving p update
         p_nvp_matrix = flow.p_nvp(data)
         new_p = torch.bmm(torch.linalg.matrix_exp(dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
-        data = VerletData(data.q, new_p, data.t)
+        data = AugmentedData(data.q, new_p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
         # Time-update step
-        data = VerletData(data.q, data.p, data.t + dt)
+        data = AugmentedData(data.q, data.p, data.t + dt)
         return data, dlogp
 
-    def reverse_integrate_step(self, flow: VerletFlow, data: VerletData, dt: float) -> Tuple[VerletData, torch.tensor]:
+    def reverse_integrate_step(self, flow: VerletFlow, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.tensor]:
         dlogp = torch.zeros((data.batch_size,), device=data.device)
         # Time-update step
-        data = VerletData(data.q, data.p, data.t - dt)
+        data = AugmentedData(data.q, data.p, data.t - dt)
         # Non-volume-preserving p update
         p_nvp_matrix = flow.p_nvp(data)
         new_p = torch.bmm(torch.linalg.matrix_exp(-dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
-        data = VerletData(data.q, new_p, data.t)
+        data = AugmentedData(data.q, new_p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
         # Volume-preserving p update
         p_vp = flow.p_vp(data)
-        data = VerletData(data.q, data.p - dt * p_vp, data.t)
+        data = AugmentedData(data.q, data.p - dt * p_vp, data.t)
         # Non-volume-preserving q update
         q_nvp_matrix = flow.q_nvp(data)
         new_q = torch.bmm(torch.linalg.matrix_exp(-dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
-        data = VerletData(new_q, data.p, data.t)
+        data = AugmentedData(new_q, data.p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
-        data = VerletData(data.q - dt * q_vp, data.p, data.t)
+        data = AugmentedData(data.q - dt * q_vp, data.p, data.t)
         return data, dlogp
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
-    def integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
+    def integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
@@ -109,7 +109,7 @@ class VerletIntegrator(Integrator):
             trajectory.flow_logp += dlogp
         return data, trajectory
 
-    def reverse_integrate(self, flow: VerletFlow, data: VerletData, trajectory: FlowTrajectory, num_steps: int = 10) -> Tuple[VerletData, FlowTrajectory]:
+    def reverse_integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
@@ -119,10 +119,10 @@ class VerletIntegrator(Integrator):
         return data, trajectory
 
     # Check invertibility of integrator
-    def assert_consistency(self, flow: VerletFlow, source_data: VerletData, num_steps: int = 10):
+    def assert_consistency(self, flow: VerletFlow, source_data: AugmentedData, num_steps: int = 10):
         assert torch.allclose(source_data.t, torch.zeros_like(source_data.t, device=source_data.device), atol=1e-7), f"source_data.t = {source_data.t}"
         # Perform forward integration pass
-        forward_trajectory = FlowTrajectory()
+        forward_trajectory = AugmentedFlowTrajectory()
         forward_trajectory.trajectory.append(source_data)
         target_data, trajectory = self.integrate(flow, source_data, forward_trajectory, num_steps)
 
@@ -130,7 +130,7 @@ class VerletIntegrator(Integrator):
         assert math.isclose(target_data.t, 1.0), f"target_data.t = {target_data.t}"
 
         # Perform reverse integration pass
-        reverse_trajectory = FlowTrajectory()
+        reverse_trajectory = AugmentedFlowTrajectory()
         reverse_trajectory.trajectory.append(target_data)
         recreated_source_data, reverse_trajectory = self.reverse_integrate(flow, target_data, reverse_trajectory, num_steps)
 

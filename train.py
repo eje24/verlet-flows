@@ -3,20 +3,18 @@ import sys
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.append('../')
-from model.cnf import PhaseSpaceCNF
-from utils.parsing import parse_phase_space_cnf_args, display_args
+from model.cnf import AugmentedCNF
 
 PROJECT_NAME = 'verlet-flows'
 
 def get_model(cfg: DictConfig) -> pl.LightningModule:
     if cfg.training.loss == 'cnf':
-        return PhaseSpaceCNF(cfg)
+        return AugmentedCNF(cfg)
     elif cfg.training.loss == 'flow_matching':
         raise NotImplementedError
 

@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from omegaconf import DictConfig
 
-from datasets.verlet import VerletData
+from datasets.aug_data import AugmentedData
 
 class Density(ABC):
     @abstractmethod
@@ -178,73 +178,6 @@ class Funnel(Distribution):
         plt.imshow(density, extent=[-5, 5, -10, 10])
         plt.colorbar()
 
-
-class VerletGMM(Density):
-    def __init__(self, q_dist: GMM, p_dist: Gaussian, t: float = 1.0):
-        self.q_dist = q_dist
-        self.p_dist = p_dist
-        self.t = t
-
-    def to(self, device):
-        self.q_dist.to(device)
-        self.p_dist.to(device)
-        return self
-
-    def sample(self, n):
-        q = self.q_dist.sample(n)
-        p = self.p_dist.sample(n)
-        t = self.t * torch.ones((n,1), device=q.device)
-        return VerletData(q, p, t)
-
-    def get_density(self, data: VerletData):
-        q = self.q_dist.get_density(data.q)
-        p = self.p_dist.get_density(data.p)
-        return q + p
-
-class VerletGaussian(Sampleable, Density):
-    def __init__(self, q_dist: Gaussian, p_dist: Gaussian, t: float = 1.0):
-        self.q_dist = q_dist
-        self.p_dist = p_dist
-        self.t = t
-
-    def to(self, device):
-        self.q_dist.to(device)
-        self.p_dist.to(device)
-        return self
-
-    def sample(self, n):
-        q = self.q_dist.sample(n)
-        p = self.p_dist.sample(n)
-        t = self.t * torch.ones((n,1), device=q.device)
-        return VerletData(q, p, t)
-
-    def get_density(self, data: VerletData):
-        q = self.q_dist.get_density(data.q)
-        p = self.p_dist.get_density(data.p)
-        return q + p
-
-class VerletFunnel(Sampleable, Density):
-    def __init__(self, q_dist: Funnel, p_dist: Gaussian, t: float = 1.0):
-        self.q_dist = q_dist
-        self.p_dist = p_dist
-        self.t = t
-
-    def to(self, device):
-        self.q_dist.to(device)
-        self.p_dist.to(device)
-        return self
-
-    def sample(self, n):
-        q = self.q_dist.sample(n)
-        p = self.p_dist.sample(n)
-        t = self.t * torch.ones((n,1), device=q.device)
-        return VerletData(q, p, t)
-
-    def get_density(self, data: VerletData):
-        q = self.q_dist.get_density(data.q)
-        p = self.p_dist.get_density(data.p)
-        return q + p
-
 class AugmentedDistribution(Distribution):
     def __init__(self, q_dist: Density, p_dist: Density, t: float = 1.0):
         self.q_dist = q_dist
@@ -260,9 +193,9 @@ class AugmentedDistribution(Distribution):
         q = self.q_dist.sample(n)
         p = self.p_dist.sample(n)
         t = self.t * torch.ones((n,1), device=q.device)
-        return VerletData(q, p, t)
+        return AugmentedData(q, p, t)
 
-    def get_density(self, data: VerletData):
+    def get_density(self, data: AugmentedData):
         q = self.q_dist.get_density(data.q)
         p = self.p_dist.get_density(data.p)
         return q + p

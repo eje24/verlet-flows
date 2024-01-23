@@ -1,7 +1,7 @@
 import ot
 import torch
 
-from datasets.verlet import VerletData
+from datasets.aug_data import AugmentedData
 
 
 def get_emd_matrix(a, b, xs, xt):
@@ -25,5 +25,5 @@ def verlet_emd_reorder(data_s, data_t):
     xs = data_s.get_qp()
     xt = data_t.get_qp()
     xsc, xtc = emd_reorder(xs, xt)
-    return VerletData.from_qp(xsc, data_s.t), VerletData.from_qp(xtc, data_t.t)
+    return AugmentedData.from_qp(xsc, data_s.t), AugmentedData.from_qp(xtc, data_t.t)
 

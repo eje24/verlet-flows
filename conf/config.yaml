@@ -5,6 +5,6 @@ run_name: unnamed_run
 defaults:
   - flow: verlet
   - source: gaussian
-  - target: weird_gaussian
+  - target: bimodal
   - training: cnf
   
