@@ -77,20 +77,23 @@ class AugmentedWrapper:
 
     # Graphs the q projection of the learned flow at p=0
     @torch.no_grad()
-    def graph_flow_marginals(self, n_marginals = 5, bins=100, xlim=3, ylim=3):
+    def graph_flow_marginals(self, n_marginals = 5, bins=25, xlim=3, ylim=3, mode='streamplot'):
         qx = np.linspace(-xlim, xlim, bins)
         qy = np.linspace(-ylim, ylim, bins)
         QX, QY = np.meshgrid(qx, qy)
         qxy = torch.tensor(np.stack([QX.reshape(-1), QY.reshape(-1)]).T, dtype=torch.float32, device='cuda')
 
-        fix, axs = plt.subplots(1, n_marginals, figsize=(10, 10))
+        fix, axs = plt.subplots(1, n_marginals, figsize=(100, 20))
         t_base = torch.ones(bins ** 2, 1, device=self._device)
         p = torch.zeros_like(qxy, device=self._device)
         for t in range(n_marginals):
-            data = AugmentedData(qxy, p, t / n_marginals * t_base)
+            data = AugmentedData(qxy, p, t / (n_marginals - 1) * t_base)
             dq, _ = self._flow.get_flow(data)
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
-            axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
+            if mode == 'streamplot':
+                axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
+            elif mode == 'quiver':
+                axs[t].quiver(QX, QY, dq[:,:,0], dq[:,:,1], scale=30.0)
             axs[t].set_aspect('equal', 'box')
             axs[t].set_title('t = ' + str(t / n_marginals))
             axs[t].set_xlim(-xlim, xlim)
