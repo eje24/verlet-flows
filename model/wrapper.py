@@ -69,12 +69,6 @@ class AugmentedWrapper:
         target_data = self._target.sample(n_sample)
         return self.reverse_integrate(target_data, n_steps, integrator)
 
-    def reverse_kl(self, N=10000) -> float:
-        data, trajectory = self.sample(N)
-        pushforward_logp = trajectory.source_logp + trajectory.flow_logp
-        target_logp = self._target.get_density(data)
-        return torch.mean(pushforward_logp - target_logp)
-
     # Graphs the q projection of the learned flow at p=0
     @torch.no_grad()
     def graph_flow_marginals(self, n_marginals = 5, bins=25, xlim=3, ylim=3, mode='streamplot'):
@@ -148,14 +142,11 @@ class AugmentedWrapper:
         marginal_idxs = self.get_marginal_idxs(n_marginals, n_integrator_steps)
         self.graph_marginals(trajectory, marginal_idxs)
 
-def print_model_size(model):
-    param_size = 0
-    for param in model.parameters():
-        param_size += param.nelement() * param.element_size()
-    buffer_size = 0
-    for buffer in model.buffers():
-        buffer_size += buffer.nelement() * buffer.element_size()
+    # Experiments
+    def reverse_kl(self, N=10000) -> float:
+        data, trajectory = self.sample(N)
+        pushforward_logp = trajectory.source_logp + trajectory.flow_logp
+        target_logp = self._target.get_density(data)
+        return torch.mean(pushforward_logp - target_logp)
 
-    size_all_mb = (param_size + buffer_size) / 1024**2
-    print('model size: {:.3f}MB'.format(size_all_mb))
 
