@@ -149,4 +149,11 @@ class AugmentedWrapper:
         target_logp = self._target.get_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
+    def estimate_z(self, N=10000) -> float:
+        data, trajectory = self.sample(N)
+        pushforward_logp = trajectory.source_logp + trajectory.flow_logp
+        pushforward_p = pushforward_logp
+        target_p = self._target.get_density(data)
+        return torch.mean(torch.exp(target_p - pushforward_p))
+
 
