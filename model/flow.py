@@ -20,41 +20,6 @@ class AugmentedFlow(ABC):
     def forward(self, t: float, qp: torch.Tensor) -> torch.Tensor:
         pass
 
-    def _create_net(self, in_dims, out_dims, num_hidden_units, num_hidden_layers):
-        # Contruct sequence of dimensions
-        dim_list = [in_dims] + [num_hidden_units for _ in range(num_hidden_layers)] + [out_dims]
-        # Construct network layers
-        net_list = []
-        for i in range(len(dim_list) - 1):
-            curr_dim, next_dim = dim_list[i], dim_list[i+1]
-            net_list.append(nn.Linear(curr_dim, next_dim))
-            # Don't add a SELU after the last linear layer
-            if i < len(dim_list) - 2:
-                net_list.append(nn.SELU())
-        return nn.Sequential(*net_list)
-
-class NonVerletFlow(AugmentedFlow, nn.Module):
-    def __init__(self, data_dim, num_hidden, num_layers):
-        super().__init__()
-        self._data_dim = data_dim
-        self._num_hidden = num_hidden
-        self._num_layers = num_layers
-
-        # Initialize layers
-        self._net = self._create_net(2 * data_dim + 1, 2 * data_dim, num_hidden, num_layers)
-
-    def get_flow(self, data: AugmentedData):
-        # Concatenate q and time
-        qpt = data.get_qpt()
-        d_qp = self._net(qpt)
-        d_q, d_p = d_qp[:, :self._data_dim], d_qp[:, self._data_dim:]
-        return d_q, d_p
-
-    def forward(self, t: float, qp: torch.Tensor):
-        # Get data in tensor format
-        t = t * torch.ones((qp.size()[0], 1), device=qp.device)
-        qpt = torch.cat([qp, t], dim=1)
-        return self._net(qpt)
 
 # Adds time as an input to the network at each layer, as in FFJORD
 class TimeInjectionNet(nn.Module):
@@ -77,7 +42,7 @@ class TimeInjectionNet(nn.Module):
                 x = F.selu(x)
         return x
 
-class NonVerletTimeFlow(nn.Module):
+class NonVerletFlow(nn.Module):
     def __init__(self, data_dim, num_hidden, num_layers):
         super().__init__()
         self._data_dim = data_dim
@@ -191,7 +156,7 @@ def build_augmented_flow(cfg: DictConfig) -> AugmentedFlow:
                              num_vp_layers=cfg.num_vp_layers,
                              num_nvp_layers=cfg.num_nvp_layers)
     elif cfg.flow_type == 'non_verlet':
-        flow = NonVerletTimeFlow(data_dim=cfg.dim, 
+        flow = NonVerletFlow(data_dim=cfg.dim, 
                                  num_hidden=cfg.num_hidden_units, 
                                  num_layers=cfg.num_layers)
     else:
