@@ -21,7 +21,9 @@ def get_model(cfg: DictConfig) -> pl.LightningModule:
 @hydra.main(version_base=None, config_path='conf', config_name='config')
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-
+    wandb.config = omegaconf.OmegaConf.to_container(
+        cfg, resolve=True, throw_on_missing=True
+    )
     # Initialize model
     model = get_model(cfg)
 
