@@ -12,8 +12,8 @@ from typing import Tuple, List, Optional
 import numpy as np
 
 from model.ot import verlet_emd_reorder
-from model.integrator import Integrator, VerletIntegrator, NumericIntegrator, AugmentedFlowTrajectory, build_integrator
-from model.flow import AugmentedFlow, VerletFlow, NonVerletFlow, NonVerletTimeFlow
+from model.integrator import AugmentedFlowTrajectory, build_integrator
+from model.flow import AugmentedFlow
 from datasets.dist import Sampleable, Density, Distribution, GMM, Gaussian, Funnel
 from datasets.aug_data import AugmentedData
 
@@ -41,7 +41,7 @@ class AugmentedWrapper:
         # Initialize trajectory
         trajectory = AugmentedFlowTrajectory()
         trajectory.trajectory.append(data)
-        trajectory.source_logp = self._source.get_density(data)
+        trajectory.source_logp = self._source.get_log_density(data)
         # Integrate
         integrator = build_integrator(integrator)
         data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=False)
@@ -53,7 +53,7 @@ class AugmentedWrapper:
         # Initialize trajectory
         trajectory = AugmentedFlowTrajectory()
         trajectory.trajectory.append(data)
-        # trajectory.source_logp = self._source.get_density(data)
+        # trajectory.source_logp = self._source.get_log_density(data)
         # Integrate
         integrator = build_integrator(integrator)
         data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=True)
@@ -145,14 +145,14 @@ class AugmentedWrapper:
     def reverse_kl(self, N=10000) -> float:
         data, trajectory = self.sample(N)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
-        target_logp = self._target.get_density(data)
+        target_logp = self._target.get_log_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
     def estimate_z(self, N=10000) -> float:
         data, trajectory = self.sample(N)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         pushforward_p = pushforward_logp
-        target_p = self._target.get_density(data)
+        target_p = self._target.get_log_density(data)
         return torch.mean(torch.exp(target_p - pushforward_p))
 
 

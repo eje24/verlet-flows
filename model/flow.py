@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Tuple, Callable
 import math
 
 import torch
@@ -9,6 +9,8 @@ from torchdiffeq import odeint
 from omegaconf import DictConfig
 
 from datasets.aug_data import AugmentedData
+from datasets.dist import Distribution
+from model.time_embeddings import TimeConder
 
 class AugmentedFlow(ABC):
     @abstractmethod
@@ -23,7 +25,11 @@ class AugmentedFlow(ABC):
 
 # Adds time as an input to the network at each layer, as in FFJORD
 class TimeInjectionNet(nn.Module):
-    def __init__(self, in_dim, out_dim, num_hidden, num_layers):
+    def __init__(self, 
+                 in_dim, 
+                 out_dim, 
+                 num_hidden, 
+                 num_layers):
         super().__init__()
         # Initialize modules
         module_list = []
@@ -43,10 +49,16 @@ class TimeInjectionNet(nn.Module):
         return x
 
 class NonVerletFlow(nn.Module):
-    def __init__(self, data_dim, num_hidden, num_layers):
+    def __init__(self, 
+                 data_dim, 
+                 num_hidden, 
+                 num_layers, 
+                 use_grad = True, 
+                 log_grad_fn: Callable = None):
         super().__init__()
         self._data_dim = data_dim
-        self._net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
+        self._flow_net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
+        self._grad_net = TimeConder(64, 1, 3)
 
     def get_flow(self, data: AugmentedData):
         # Concatenate q and time
@@ -58,11 +70,14 @@ class NonVerletFlow(nn.Module):
         # Concatenate q and time
         x = data.get_qp()
         t = data.t
-        return self._net(x, t)
+        if self.use_grad:
+            return self._flow_net(x, t) + self._grad_net(t) * self.log_grad_fn(x)
+        else:
+            return self._flow_net(x, t)
 
     def wrap_for_integration(self, integrator: str):
         if integrator == 'verlet':
-            raise ValueError('NonVerletTimeFlow cannot be used with Verlet integrator')
+            raise ValueError('NonVerletFlow cannot be used with Verlet integrator')
         elif integrator == 'numeric':
             return TorchdynAugmentedFlowWrapper(self)
 
@@ -148,17 +163,21 @@ class TorchdynAugmentedFlowWrapper(nn.Module):
         dt = torch.ones_like(t).to(x)
         return torch.cat([dt, dq, dp], dim=1)
 
-def build_augmented_flow(cfg: DictConfig) -> AugmentedFlow:
+def build_augmented_flow(flow_cfg: DictConfig, target: Distribution) -> AugmentedFlow:
     if cfg.flow_type == 'verlet':
-        flow = VerletFlow(data_dim=cfg.dim,
-                             num_vp_hidden=cfg.num_vp_hidden,
-                             num_nvp_hidden=cfg.num_nvp_hidden,
-                             num_vp_layers=cfg.num_vp_layers,
-                             num_nvp_layers=cfg.num_nvp_layers)
+        flow = VerletFlow(data_dim=flow_cfg.dim,
+                             num_vp_hidden=flow_cfg.num_vp_hidden,
+                             num_nvp_hidden=flow_cfg.num_nvp_hidden,
+                             num_vp_layers=flow_cfg.num_vp_layers,
+                             num_nvp_layers=flow_cfg.num_nvp_layers)
     elif cfg.flow_type == 'non_verlet':
-        flow = NonVerletFlow(data_dim=cfg.dim, 
-                                 num_hidden=cfg.num_hidden_units, 
-                                 num_layers=cfg.num_layers)
+        log_grad_fn = target.log_grad_fn if flow_cfg.use_grad else None
+        flow = NonVerletFlow(data_dim=flow_cfg.dim, 
+                             num_hidden=flow_cfg.num_hidden_units, 
+                             num_layers=flow_cfg.num_layers,
+                             use_grad=flow_cfg.use_grad,
+                             log_grad_fn=log_grad_fn
+                             )
     else:
-        raise ValueError(f'Invalid flow type: {cfg.flow_type}')
+        raise ValueError(f'Invalid flow type: {flow_cfg.flow_type}')
     return flow

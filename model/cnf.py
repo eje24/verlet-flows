@@ -15,7 +15,7 @@ from omegaconf import DictConfig
 sys.path.append('../')
 from datasets.dist import Gaussian, GMM, Funnel, build_augmented_distribution
 from datasets.aug_data import AugmentedData
-from model.flow import VerletFlow, NonVerletFlow, NonVerletTimeFlow, TorchdynAugmentedFlowWrapper, build_augmented_flow
+from model.flow import TorchdynAugmentedFlowWrapper, build_augmented_flow
 from model.wrapper import AugmentedWrapper
 
 # DATASETS
@@ -171,7 +171,7 @@ class CNF(pl.LightningModule):
         _, trajectory = self.model(x0, self.t_span)
         x1 = trajectory[-1]
         flow_logp = x1[:, 0]
-        source_logp = self.source.get_density(x1[:, 2:])
+        source_logp = self.source.get_log_density(x1[:, 2:])
         return -torch.mean(source_logp - flow_logp)
 
     def data_loss(self, N=10000):
@@ -180,14 +180,14 @@ class CNF(pl.LightningModule):
 
     def reverse_kl(self, num_timesteps = 25, N=10000):
         x1 = self.source_set.sample(N, t=1.0)
-        source_logp = self.source.get_density(x1[:, 2:])
+        source_logp = self.source.get_log_density(x1[:, 2:])
         t_span = torch.linspace(1.0, 0.0, num_timesteps)
         _, trajectory = self.model(x1, t_span)
         x0 = trajectory[-1] # select last point of solution trajectory
         flow_logp = x0[:,0]
         x0 = x0[:,2:]
         pushforward_logp = source_logp + flow_logp
-        target_logp = self.target.get_density(x0)
+        target_logp = self.target.get_log_density(x0)
         return torch.mean(pushforward_logp - target_logp)
 
     def training_step(self, batch, batch_idx):
@@ -248,16 +248,16 @@ class AugmentedCNF(pl.LightningModule):
         # Initialize timespan
         self.t_span = torch.linspace(0.0, 1.0, self.cfg.training.num_timesteps)
 
-        # Initialize model
-        flow = build_augmented_flow(self.cfg.flow)
-        self.flow = TorchdynAugmentedFlowWrapper(flow)
-        self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
-
         # Initialize source, target, train
         self.source = build_augmented_distribution(self.cfg.source, self.device, 1.0)
         self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
         self.source_set = TorchdynAugmentedDataset(self.source, self.cfg.training.num_train)
         self.target_set = TorchdynAugmentedDataset(self.target, self.cfg.training.num_train)
+        
+        # Initialize model
+        flow = build_augmented_flow(self.cfg.flow, self.target)
+        self.flow = TorchdynAugmentedFlowWrapper(flow)
+        self.model = NeuralODE(CNFWrapper(self.flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
 
     def align_devices(self):
         self.source.to(self.device)
@@ -283,7 +283,7 @@ class AugmentedCNF(pl.LightningModule):
         x1 = trajectory[-1]
         flow_logp = x1[:, 0]
         x1 = AugmentedData.from_qp(x1[:, 2:], t=1.0)
-        source_logp = self.source.get_density(x1)
+        source_logp = self.source.get_log_density(x1)
         return -torch.mean(source_logp - flow_logp)
 
     def data_loss(self, N=10000):
@@ -293,14 +293,14 @@ class AugmentedCNF(pl.LightningModule):
     def reverse_kl(self, num_timesteps = 25, N=10000):
         x1 = self.source_set.sample(N, t=1.0)
         x1_data = AugmentedData.from_qp(x1[:,2:], t=1.0)
-        source_logp = self.source.get_density(x1_data)
+        source_logp = self.source.get_log_density(x1_data)
         t_span = torch.linspace(1.0, 0.0, num_timesteps)
         _, trajectory = self.model(x1, t_span)
         x0 = trajectory[-1] # select last point of solution trajectory
         flow_logp = x0[:,0]
         x0 = AugmentedData.from_qp(x0[:,2:], 1.0)
         pushforward_logp = source_logp + flow_logp
-        target_logp = self.target.get_density(x0)
+        target_logp = self.target.get_log_density(x0)
         return torch.mean(pushforward_logp - target_logp)
 
     def training_step(self, batch, batch_idx):

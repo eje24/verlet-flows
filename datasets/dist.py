@@ -8,9 +8,30 @@ from omegaconf import DictConfig
 
 from datasets.aug_data import AugmentedData
 
+def graph_log_density(density_fn, ax, bins=100, xlim=5, ylim=5):
+    x = np.linspace(-xlim, xlim, bins)
+    y = np.linspace(-ylim, ylim, bins)
+    X, Y = np.meshgrid(x, y)
+    xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
+    density = density_fn(torch.tensor(xy, device='cuda')).cpu().numpy().reshape(bins, bins)
+    ax.imshow(density, extent=[-xlim, xlim, -ylim, ylim])
+
+def graph_log_grad_fn(log_grad_fn, ax, bins=25, xlim=5, ylim=5, scale=30.0):
+    x = np.linspace(-xlim, xlim, bins)
+    y = np.linspace(-ylim, ylim, bins)
+    X, Y = np.meshgrid(x, y)
+    xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
+    graph = log_grad_fn(torch.tensor(xy, device='cuda')).cpu().numpy().reshape(bins, bins, 2)
+    ax.quiver(X, Y, graph[:, :, 0], graph[:, :, 1], scale=30.0)
+
+
 class Density(ABC):
     @abstractmethod
-    def get_density(self, x):
+    def get_log_density(self, x):
+        pass
+
+    @abstractmethod
+    def log_grad_fn(self, x):
         pass
 
 class Sampleable(ABC):
@@ -21,61 +42,6 @@ class Sampleable(ABC):
 class Distribution(Density, Sampleable):
     pass
 
-
-# Based on https://github.com/qsh-zh/pis/blob/master/src/datamodules/datasets/ps.py#L90
-class GMM(Distribution):
-    def __init__(self, device, nmode=3, xlim = 3.0, scale = 0.15):
-        self.weights = torch.ones(nmode).to(device)
-        angles = np.linspace(0, 2 * np.pi, nmode+1)[:-1]
-        np_loc = xlim * np.stack([np.cos(angles), np.sin(angles)]).T
-        self.loc = torch.tensor(np_loc, dtype = torch.float).to(device)
-        self.gmm_cov = torch.ones(size=(nmode, 2), device=device) * scale * xlim
-        self.device = device
-        self.gmm = self.create_gmm(self.weights, self.loc, self.gmm_cov)
-
-    def create_gmm(self, weights, loc, gmm_cov):
-        mix = D.Categorical(weights)
-        dist = D.Normal(loc, gmm_cov)
-        comp = D.Independent(dist, 1)
-        return D.MixtureSameFamily(mix, comp)
-
-    def to(self, device):
-        self.device = device
-        self.loc = self.loc.to(device)
-        self.weights = self.weights.to(device)
-        self.gmm_cov = self.gmm_cov.to(device)
-        self.gmm = self.create_gmm(self.weights, self.loc, self.gmm_cov)
-
-    def get_density(self, x):
-        return self.gmm.log_prob(x)
-
-    def sample(self, n):
-        return self.gmm.sample((n,))
-
-    def graph_density(self, bins=100):
-        # Use np.meshgrid to create a grid of points
-        x = np.linspace(-3, 3, bins)
-        y = np.linspace(-3, 3, bins)
-        X, Y = np.meshgrid(x, y)
-        xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
-        density = self.get_density(torch.tensor(xy, device=self.device)).cpu().numpy().reshape(bins, bins)
-        plt.imshow(density, extent=[-3, 3, -3, 3])
-
-    def graph(self, N, bins=100):
-        # Sample N points
-        samples = self.sample(N).cpu().numpy()
-        
-        # Use the samples to create a heatmap
-        plt.hist2d(samples[:, 0], samples[:, 1], bins=bins, density=True)
-        
-        # Add a color bar to the side
-        plt.colorbar()
-
-        # Set the aspect of the plot to be equal
-        plt.gca().set_aspect('equal', adjustable='box')
-
-        # Show the plot
-        plt.show()
 
 
 class Gaussian(Distribution):
@@ -89,11 +55,12 @@ class Gaussian(Distribution):
         self.mean = self.mean.to(device)
         self.cov = self.cov.to(device)
         self.gaussian = D.MultivariateNormal(self.mean, self.cov)
+        return self
 
     def sample(self, n):
         return self.gaussian.sample((n,))
 
-    def get_density(self, x):
+    def get_log_density(self, x):
         return self.gaussian.log_prob(x)
 
     @staticmethod
@@ -119,6 +86,105 @@ class Gaussian(Distribution):
         # Show the plot
         plt.show()
 
+    def graph_log_density_and_grad(self):
+        ax = plt.subplot(1, 1, 1)
+        graph_log_density(self.get_log_density, ax)
+        graph_log_grad_fn(self.log_grad_fn, ax)
+
+    # Gradient of the density
+    def grad_fn(self, x: torch.Tensor):
+        return self.log_grad_fn(x) * torch.exp(self.get_log_density(x)).view(-1, 1)
+
+
+    # Gradient of the log density
+    def log_grad_fn(self, x: torch.Tensor):
+        return -torch.matmul((x.float() - self.mean), torch.inverse(self.cov))
+
+class GMM(Distribution):
+    def __init__(self, means: list[torch.Tensor], covs: list[torch.Tensor], weights: list[float], device = None):
+        self.nmodes = len(means)
+        self.gaussians = [Gaussian(mean.float(), cov.float()) for mean, cov in zip(means, covs)]
+        self.weights = weights
+        if device is None:
+            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.to(device)
+
+    @staticmethod
+    def regular_gmm(nmode, xlim = 3.0, scale = 0.15):
+        angles = np.linspace(0, 2 * np.pi, nmode+1)[:-1]
+        means = xlim * np.stack([np.cos(angles), np.sin(angles)]).T
+        means = [torch.from_numpy(means[idx]) for idx in range(nmode)]
+        covs = [torch.eye(2) * scale * xlim for _ in range(nmode)]
+        weights = [1.0 / nmode for _ in range(nmode)]
+        return CustomGMM(means, covs, weights)
+
+    def to(self, device):
+        self.device = device
+        # Move gaussians to device
+        for idx in range(self.nmodes):
+            self.gaussians[idx] = self.gaussians[idx].to(device)
+
+    def sample(self, n):
+        # Sample from categorical distribution given by weights
+        sample_idxs = torch.multinomial(torch.tensor(self.weights), n, replacement=True).to(self.device)
+        samples = torch.zeros(n,2).to(self.device)
+        for idx in range(self.nmodes):
+            # Get samples from each gaussian
+            gaussian_samples = self.gaussians[idx].sample(n)
+            # Select samples from this gaussian
+            gaussian_idxs = (sample_idxs == idx)
+            # Replace samples
+            samples[gaussian_idxs] = gaussian_samples[gaussian_idxs]
+        return samples
+
+    # Returns log density
+    def get_log_density(self, x):
+        x = x.to(self.device)
+        density = torch.zeros(x.shape[0]).to(self.device)
+        for idx, gaussian in enumerate(self.gaussians):
+            density = density + self.weights[idx] * torch.exp(gaussian.get_log_density(x))
+        return torch.log(density)
+
+    def graph_log_density(self, bins=100):
+        # Use np.meshgrid to create a grid of points
+        x = np.linspace(-3, 3, bins)
+        y = np.linspace(-3, 3, bins)
+        X, Y = np.meshgrid(x, y)
+        xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
+        density = self.get_log_density(torch.tensor(xy, device=self.device)).cpu().numpy().reshape(bins, bins)
+        plt.imshow(density, extent=[-5, 5, -5, 5])
+
+    def graph(self, N, bins=100):
+        # Sample N points
+        samples = self.sample(N).cpu().numpy()
+        
+        # Use the samples to create a heatmap
+        plt.hist2d(samples[:, 0], samples[:, 1], bins=bins, density=True)
+        
+        # Add a color bar to the side
+        plt.colorbar()
+
+        # Set the aspect of the plot to be equal
+        plt.gca().set_aspect('equal', adjustable='box')
+
+        # Show the plot
+        plt.show()
+
+    @torch.no_grad()
+    def graph_log_density_and_grad(self):
+        ax = plt.subplot(1, 1, 1)
+        graph_log_density(self.get_log_density, ax)
+        graph_log_grad_fn(self.log_grad_fn, ax, bins=20, scale=250.0)
+
+    def log_grad_fn(self, x: torch.Tensor):
+        x = x.to(self.device)
+        grad = torch.zeros_like(x).to(x)
+        norm = torch.zeros(x.shape[0]).to(x)
+        for idx, gaussian in enumerate(self.gaussians):
+            grad = grad + self.weights[idx] * gaussian.grad_fn(x)
+            norm = norm + self.weights[idx] * torch.exp(gaussian.get_log_density(x))
+        return grad / norm.view(-1,1)
+
 class Funnel(Distribution):
     def __init__(self, device, dim=10):
         assert dim > 1
@@ -135,7 +201,7 @@ class Funnel(Distribution):
         x2_D = torch.randn(n, self.dim - 1, device=self.device) * torch.exp(x1 / 2)
         return torch.cat([x1, x2_D], dim=1)
 
-    def get_density(self, x):
+    def get_log_density(self, x):
         # Split x
         x1 = x[:, 0]
         x2_D = x[:, 1:]
@@ -165,18 +231,22 @@ class Funnel(Distribution):
         # Show the plot
         plt.show()
 
-    def graph_density(self, bins=1000):
+    def graph_log_density(self, bins=1000):
         assert self.dim == 2, "Can only graph 2D funnels"
         # Use np.meshgrid to create a grid of points
         x = np.linspace(-5, 5, bins)
         y = np.linspace(-10, 10, bins)
         X, Y = np.meshgrid(x, y)
         xy = np.stack([X.reshape(-1), Y.reshape(-1)]).T
-        density = self.get_density(torch.tensor(xy, device=self.device)).cpu().numpy().reshape(bins, bins)
+        density = self.get_log_density(torch.tensor(xy, device=self.device)).cpu().numpy().reshape(bins, bins)
         # Clip density for better visualization
         density = np.clip(density, -10, 0)
         plt.imshow(density, extent=[-5, 5, -10, 10])
         plt.colorbar()
+
+    # Gradient of the log density
+    def log_grad_fn(self, x: torch.Tensor):
+        raise NotImplementedError
 
 class AugmentedDistribution(Distribution):
     def __init__(self, q_dist: Density, p_dist: Density, t: float = 1.0):
@@ -195,17 +265,22 @@ class AugmentedDistribution(Distribution):
         t = self.t * torch.ones((n,1), device=q.device)
         return AugmentedData(q, p, t)
 
-    def get_density(self, data: AugmentedData):
-        q = self.q_dist.get_density(data.q)
-        p = self.p_dist.get_density(data.p)
+    def get_log_density(self, data: AugmentedData):
+        q = self.q_dist.get_log_density(data.q)
+        p = self.p_dist.get_log_density(data.p)
         return q + p
+
+    def log_grad_fn(self, data: AugmentedData):
+        q_grad = self.q_dist.log_grad_fn(data.q)
+        p_grad = self.p_dist.log_grad_fn(data.p)
+        return torch.cat([q_grad, p_grad], dim=1)
 
 def build_augmented_distribution(cfg: DictConfig, device, t: float = 1.0) -> AugmentedDistribution:
     p_dist = Gaussian(torch.zeros(cfg.dim), torch.eye(cfg.dim))
     if cfg.distribution == 'gaussian':
         q_dist = Gaussian(torch.zeros(cfg.dim), torch.eye(cfg.dim))
     elif cfg.distribution == 'gmm':
-        q_dist = GMM(device, nmode=cfg.nmode)
+        q_dist = GMM.regular_gmm(nmode=cfg.nmode)
     elif cfg.distribution == 'funnel':
         q_dist = Funnel(device, dim=cfg.dim)
     elif cfg.distribution == 'weird_gaussian':
