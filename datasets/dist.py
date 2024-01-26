@@ -116,7 +116,7 @@ class GMM(Distribution):
         means = [torch.from_numpy(means[idx]) for idx in range(nmode)]
         covs = [torch.eye(2) * scale * xlim for _ in range(nmode)]
         weights = [1.0 / nmode for _ in range(nmode)]
-        return CustomGMM(means, covs, weights)
+        return GMM(means, covs, weights)
 
     def to(self, device):
         self.device = device

@@ -58,7 +58,9 @@ class NonVerletFlow(nn.Module):
         super().__init__()
         self._data_dim = data_dim
         self._flow_net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
-        self._grad_net = TimeConder(64, 1, 3)
+        self.use_grad = use_grad
+        if self.use_grad:
+            self._grad_net = TimeConder(64, 1, 3)
 
     def get_flow(self, data: AugmentedData):
         # Concatenate q and time
@@ -164,13 +166,13 @@ class TorchdynAugmentedFlowWrapper(nn.Module):
         return torch.cat([dt, dq, dp], dim=1)
 
 def build_augmented_flow(flow_cfg: DictConfig, target: Distribution) -> AugmentedFlow:
-    if cfg.flow_type == 'verlet':
+    if flow_cfg.flow_type == 'verlet':
         flow = VerletFlow(data_dim=flow_cfg.dim,
                              num_vp_hidden=flow_cfg.num_vp_hidden,
                              num_nvp_hidden=flow_cfg.num_nvp_hidden,
                              num_vp_layers=flow_cfg.num_vp_layers,
                              num_nvp_layers=flow_cfg.num_nvp_layers)
-    elif cfg.flow_type == 'non_verlet':
+    elif flow_cfg.flow_type == 'non_verlet':
         log_grad_fn = target.log_grad_fn if flow_cfg.use_grad else None
         flow = NonVerletFlow(data_dim=flow_cfg.dim, 
                              num_hidden=flow_cfg.num_hidden_units, 
