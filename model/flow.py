@@ -60,6 +60,7 @@ class NonVerletFlow(nn.Module):
         self._flow_net = TimeInjectionNet(2 * data_dim, 2 * data_dim, num_hidden, num_layers)
         self.use_grad = use_grad
         if self.use_grad:
+            self.log_grad_fn = log_grad_fn
             self._grad_net = TimeConder(64, 1, 3)
 
     def get_flow(self, data: AugmentedData):
@@ -73,7 +74,7 @@ class NonVerletFlow(nn.Module):
         x = data.get_qp()
         t = data.t
         if self.use_grad:
-            return self._flow_net(x, t) + self._grad_net(t) * self.log_grad_fn(x)
+            return self._flow_net(x, t) + self._grad_net(t) * self.log_grad_fn(data)
         else:
             return self._flow_net(x, t)
 

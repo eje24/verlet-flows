@@ -5,6 +5,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import hydra
+import wandb
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.append('../')
@@ -21,7 +22,7 @@ def get_model(cfg: DictConfig) -> pl.LightningModule:
 @hydra.main(version_base=None, config_path='conf', config_name='config')
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
-    wandb.config = omegaconf.OmegaConf.to_container(
+    wandb.config = OmegaConf.to_container(
         cfg, resolve=True, throw_on_missing=True
     )
     # Initialize model
