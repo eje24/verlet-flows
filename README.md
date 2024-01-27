@@ -1,4 +1,4 @@
-# Verlet Flows: Exact Likelihood Integrators for Flow-Based Models
+# Verlet Flows: Exact Likelihood Integrators for Flow-Based Generative Models
 Train with
 ```
 python train.py run_name=RUN_NAME
