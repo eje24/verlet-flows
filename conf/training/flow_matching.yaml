@@ -1,0 +1,6 @@
+loss: flow_matching
+num_epochs: 30
+num_train: 4096
+num_val: 1024
+batch_size: 256
+val_every_n_epochs: 3

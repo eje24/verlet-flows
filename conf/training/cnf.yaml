@@ -1,5 +1,5 @@
 loss: cnf
-num_epochs: 120
+num_epochs: 60
 num_train: 4096
 num_val: 1024
 batch_size: 256

@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.append('../')
 from model.cnf import AugmentedCNF
+from model.flow_matching import FlowMatching
 
 PROJECT_NAME = 'verlet-flows'
 
@@ -17,7 +18,7 @@ def get_model(cfg: DictConfig) -> pl.LightningModule:
     if cfg.training.loss == 'cnf':
         return AugmentedCNF(cfg)
     elif cfg.training.loss == 'flow_matching':
-        raise NotImplementedError
+        return FlowMatching(cfg)
 
 @hydra.main(version_base=None, config_path='conf', config_name='config')
 def main(cfg: DictConfig) -> None:
@@ -53,10 +54,6 @@ def main(cfg: DictConfig) -> None:
                          check_val_every_n_epoch=cfg.training.val_every_n_epochs,
                          callbacks=[checkpoint_callback])
     trainer.fit(model)
-
-    # Save
-    # TODO - add auto save callback when validation loss is lowest
-    trainer.save_checkpoint(os.path.join('workdir', f'{cfg.run_name}.ckpt'))
     
 
 if __name__ == "__main__":

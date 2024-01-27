@@ -11,7 +11,6 @@ from torchdyn.numerics import odeint
 from typing import Tuple, List, Optional
 import numpy as np
 
-from model.ot import verlet_emd_reorder
 from model.integrator import AugmentedFlowTrajectory, build_integrator
 from model.flow import AugmentedFlow
 from datasets.dist import Sampleable, Density, Distribution, GMM, Gaussian, Funnel
