@@ -130,14 +130,14 @@ class AugmentedWrapper:
         plt.show()
 
     @torch.no_grad()
-    def graph_forward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60):
-        data, trajectory = self.sample(n_samples, n_integrator_steps)
+    def graph_forward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric'):
+        data, trajectory = self.sample(n_samples, n_integrator_steps, integrator)
         marginal_idxs = self.get_marginal_idxs(n_marginals, n_integrator_steps)
         self.graph_marginals(trajectory, marginal_idxs)
 
     @torch.no_grad()
-    def graph_backward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60):
-        data, trajectory = self.reverse_sample(n_samples, n_integrator_steps)
+    def graph_backward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric'):
+        data, trajectory = self.reverse_sample(n_samples, n_integrator_steps, integrator)
         marginal_idxs = self.get_marginal_idxs(n_marginals, n_integrator_steps)
         self.graph_marginals(trajectory, marginal_idxs)
 
@@ -148,11 +148,12 @@ class AugmentedWrapper:
         target_logp = self._target.get_log_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
-    def estimate_z(self, N=10000) -> float:
-        data, trajectory = self.sample(N)
+    def estimate_z(self, n_sample=10000, n_steps=60, integrator='numeric') -> float:
+        data, trajectory = self.sample(n_sample, n_steps, integrator)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         pushforward_p = pushforward_logp
         target_p = self._target.get_log_density(data)
         return torch.mean(torch.exp(target_p - pushforward_p))
+    
 
 

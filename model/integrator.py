@@ -85,7 +85,7 @@ class VerletIntegrator(Integrator):
         p_nvp_matrix = flow.p_nvp(data)
         new_p = torch.bmm(torch.linalg.matrix_exp(-dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
         data = AugmentedData(data.q, new_p, data.t)
-        dlogp -= torch.einsum('ijj->i', dt * p_nvp_matrix)
+        dlogp += torch.einsum('ijj->i', dt * p_nvp_matrix)
         # Volume-preserving p update
         p_vp = flow.p_vp(data)
         data = AugmentedData(data.q, data.p - dt * p_vp, data.t)
@@ -93,14 +93,14 @@ class VerletIntegrator(Integrator):
         q_nvp_matrix = flow.q_nvp(data)
         new_q = torch.bmm(torch.linalg.matrix_exp(-dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
         data = AugmentedData(new_q, data.p, data.t)
-        dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
+        dlogp += torch.einsum('ijj->i', dt * q_nvp_matrix)
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
         data = AugmentedData(data.q - dt * q_vp, data.p, data.t)
         return data, dlogp
 
     # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
-    def integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+    def do_integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
@@ -109,7 +109,7 @@ class VerletIntegrator(Integrator):
             trajectory.flow_logp += dlogp
         return data, trajectory
 
-    def reverse_integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+    def do_reverse_integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
         for _ in range(num_steps):
@@ -117,6 +117,12 @@ class VerletIntegrator(Integrator):
             trajectory.trajectory.append(data)
             trajectory.flow_logp += dlogp
         return data, trajectory
+
+    def integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10, reverse=False) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+        if reverse:
+            return self.do_integrate(flow, data, trajectory, num_steps)
+        else:
+            return self.do_reverse_integrate(flow, data, trajectory, num_steps)
 
     # Check invertibility of integrator
     def assert_consistency(self, flow: VerletFlow, source_data: AugmentedData, num_steps: int = 10):
