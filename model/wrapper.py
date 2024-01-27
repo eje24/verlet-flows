@@ -82,10 +82,12 @@ class AugmentedWrapper:
             data = AugmentedData(qxy, p, t / (n_marginals - 1) * t_base)
             dq, _ = self._flow.get_flow(data)
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()
+            # NOTE: We negate dq and dp because target is at t=0 and source is at t=1
+            # TODO: switch signs when we correct source to be at t=0 and target to be at t=1
             if mode == 'streamplot':
-                axs[t].streamplot(QX, QY, dq[:,:,0], dq[:,:,1])
+                axs[t].streamplot(QX, QY, -dq[:,:,0], -dq[:,:,1])
             elif mode == 'quiver':
-                axs[t].quiver(QX, QY, dq[:,:,0], dq[:,:,1], scale=30.0)
+                axs[t].quiver(QX, QY, -dq[:,:,0], -dq[:,:,1], scale=30.0)
             axs[t].set_aspect('equal', 'box')
             axs[t].set_title('t = ' + str(t / n_marginals))
             axs[t].set_xlim(-xlim, xlim)
