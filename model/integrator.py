@@ -4,7 +4,8 @@ import math
 
 import torch
 from torchdiffeq import odeint
-from torchdyn.models import NeuralODE, CNF as CNFWrapper
+from model.torchdyn import hutch_trace, CNF as CNFWrapper
+from torchdyn.models import NeuralODE
 
 from datasets.aug_data import AugmentedData
 from model.flow import AugmentedFlow, VerletFlow, TorchdynAugmentedFlowWrapper
@@ -20,11 +21,24 @@ class Integrator(ABC):
 
 class NumericIntegrator(Integrator):
     def __init__(self):
-        pass
+        self.name = 'numeric'
+
+    def build_cnf(self, flow: TorchdynAugmentedFlowWrapper, device, trace_estimator, verbose) -> CNFWrapper:
+        if trace_estimator == 'hutch_trace':
+            print('Using Hutch Trace')
+            total_dim = 2 * flow.flow._data_dim + 1
+            noise_dist = torch.distributions.MultivariateNormal(torch.zeros(total_dim).to(device), torch.eye(total_dim).to(device))
+            return CNFWrapper(flow, trace_estimator=hutch_trace, noise_dist=noise_dist, verbose=verbose)
+        elif trace_estimator == 'autograd_trace':
+            print('Using Autograd Trace')
+            return CNFWrapper(flow, verbose=verbose)
+            
 
     @torch.no_grad()
-    def integrate(self, flow: TorchdynAugmentedFlowWrapper, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int, reverse=False) -> AugmentedData:
-        ode = NeuralODE(CNFWrapper(flow), sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
+    def integrate(self, flow: TorchdynAugmentedFlowWrapper, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int, trace_estimator: str, reverse=False, verbose=False) -> AugmentedData:
+        cnf = self.build_cnf(flow, device=data.device, trace_estimator=trace_estimator, verbose=verbose)
+        ode = NeuralODE(cnf, sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
+        print(f'Numerically integrating with {num_steps} steps')
         t_span = torch.linspace(1.0, 0.0, num_steps + 1)
         # Augment data with time and concatenate logp and time
         data = data.get_qp()
@@ -52,7 +66,7 @@ class NumericIntegrator(Integrator):
 class VerletIntegrator(Integrator):
     def __init__(self):
         # This parameter indicates whether integrating populates the flow_logp property of the trajectory
-        self.supports_likelihood = True
+        self.name = 'verlet'
 
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     def integrate_step(self, flow: VerletFlow, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.tensor]:

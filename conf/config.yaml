@@ -3,8 +3,8 @@ run_name: unnamed_run
 
 # Defaults (with their own .yaml files)
 defaults:
-  - flow: non_verlet
+  - flow: verlet
   - source: gaussian
-  - target: trimodal
-  - training: flow_matching
+  - target: weird_gaussian
+  - training: cnf
   

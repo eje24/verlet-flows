@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from enum import Enum
+import time
+import math
 
 import matplotlib.pyplot as plt
-import math
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,7 +35,7 @@ class AugmentedWrapper:
         self._flow = self._flow.to(device)
         self._device = device
 
-    def integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+    def integrate(self, data: AugmentedData, num_steps: int, integrator: str, trace_estimator: str, verbose: bool=False) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         # Wrap flow if necessary to become compatible with integrator
         flow = self._flow.wrap_for_integration(integrator)
         # Initialize trajectory
@@ -43,7 +44,10 @@ class AugmentedWrapper:
         trajectory.source_logp = self._source.get_log_density(data)
         # Integrate
         integrator = build_integrator(integrator)
-        data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=False)
+        if integrator.name == 'numeric':
+            data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=False, trace_estimator=trace_estimator, verbose=verbose)
+        else:
+            data, trajectory = integrator.integrate(flow, data, trajectory, num_steps, reverse=False)
         return data, trajectory
 
     def reverse_integrate(self, data: AugmentedData, num_steps: int, integrator) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
@@ -59,9 +63,9 @@ class AugmentedWrapper:
         return data, trajectory
 
 
-    def sample(self, n_sample, n_steps=60, integrator='numeric') -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+    def sample(self, n_sample, n_steps=60, integrator='numeric', trace_estimator='autograd_trace', verbose=False) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         source_data = self._source.sample(n_sample)
-        return self.integrate(source_data, n_steps, integrator)
+        return self.integrate(source_data, n_steps, integrator, trace_estimator=trace_estimator, verbose=verbose)
 
     def reverse_sample(self, n_sample, n_steps=60, integrator='numeric') -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         target_data = self._target.sample(n_sample)
@@ -149,12 +153,31 @@ class AugmentedWrapper:
         target_logp = self._target.get_log_density(data)
         return torch.mean(pushforward_logp - target_logp)
 
-    def estimate_z(self, n_sample=10000, n_steps=60, integrator='numeric') -> float:
-        data, trajectory = self.sample(n_sample, n_steps, integrator)
+    @torch.no_grad()
+    def estimate_z(self, n_sample=10000, n_steps=60, integrator='numeric', trace_estimator:str = 'autograd_trace', n_trial: int = 10) -> float:
+        data, trajectory = self.sample(n_sample * n_trial, n_steps, integrator, trace_estimator=trace_estimator)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
-        pushforward_p = pushforward_logp
-        target_p = self._target.get_log_density(data)
-        return torch.mean(torch.exp(target_p - pushforward_p))
+        target_logp = self._target.get_log_density(data)
+        log_diff = target_logp - pushforward_logp
+        z_estimates = torch.zeros((n_trial,), device=data.device)
+        for i in range(n_trial):
+            z_estimates[i] = torch.mean(torch.exp(log_diff[i * n_sample : (i + 1) * n_sample]))
+        log_importance_weights = log_diff
+        return z_estimates, log_importance_weights
+
+    # Wrapper around Z estimation which batches calls to estimate_z
+    def estimate_z_wrapper(self, n_sample=10000, n_steps=60, integrator='numeric', trace_estimator:str = 'autograd_trace', n_trial: int = 10) -> float:
+        # Note: memory constraints limit us to ~100000 samples per call
+        max_samples_per_call = 100000
+        estimates = torch.zeros((n_trial,), device=self._device)
+        trial_idx = 0
+        while n_trial > 0:
+            n_trial_batch = min(n_trial, max_samples_per_call // n_sample)
+            n_trial -= n_trial_batch
+            new_z_estimates, _ = self.estimate_z(n_sample, n_steps, integrator, trace_estimator, n_trial_batch)
+            estimates[trial_idx : trial_idx + n_trial_batch] = new_z_estimates
+            trial_idx += n_trial_batch
+        return estimates
     
 
 
