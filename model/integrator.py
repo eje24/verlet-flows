@@ -74,14 +74,14 @@ class VerletIntegrator(Integrator):
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
         data = AugmentedData(data.q + dt * q_vp, data.p, data.t)
+        # Volume-preserving p update
+        p_vp = flow.p_vp(data)
+        data = AugmentedData(data.q, data.p + dt * p_vp, data.t)
         # Non-volume-preserving q update
         q_nvp_matrix = flow.q_nvp(data)
         new_q = torch.bmm(torch.linalg.matrix_exp(dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
         data = AugmentedData(new_q, data.p, data.t)
         dlogp -= torch.einsum('ijj->i', dt * q_nvp_matrix)
-        # Volume-preserving p update
-        p_vp = flow.p_vp(data)
-        data = AugmentedData(data.q, data.p + dt * p_vp, data.t)
         # Non-volume-preserving p update
         p_nvp_matrix = flow.p_nvp(data)
         new_p = torch.bmm(torch.linalg.matrix_exp(dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
@@ -100,14 +100,14 @@ class VerletIntegrator(Integrator):
         new_p = torch.bmm(torch.linalg.matrix_exp(-dt * p_nvp_matrix), data.p.unsqueeze(2)).squeeze(2)
         data = AugmentedData(data.q, new_p, data.t)
         dlogp += torch.einsum('ijj->i', dt * p_nvp_matrix)
-        # Volume-preserving p update
-        p_vp = flow.p_vp(data)
-        data = AugmentedData(data.q, data.p - dt * p_vp, data.t)
         # Non-volume-preserving q update
         q_nvp_matrix = flow.q_nvp(data)
         new_q = torch.bmm(torch.linalg.matrix_exp(-dt * q_nvp_matrix), data.q.unsqueeze(2)).squeeze(2)
         data = AugmentedData(new_q, data.p, data.t)
         dlogp += torch.einsum('ijj->i', dt * q_nvp_matrix)
+        # Volume-preserving p update
+        p_vp = flow.p_vp(data)
+        data = AugmentedData(data.q, data.p - dt * p_vp, data.t)
         # Volume-preserving q update
         q_vp = flow.q_vp(data)
         data = AugmentedData(data.q - dt * q_vp, data.p, data.t)
