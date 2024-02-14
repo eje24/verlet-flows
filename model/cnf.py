@@ -37,10 +37,10 @@ class TorchdynAugmentedDataset(data.Dataset):
         self.source.to(device)
         return self
 
-    def sample(self, N, t=0.0):
+    def sample(self, N):
         x = self.source.sample(N)
         logp = torch.zeros(N,1).to(x.device)
-        t0 = t * torch.ones(N,1).to(x.device)
+        t0 = self.source.t * torch.ones(N,1).to(x.device)
         # Remove Verlet wrapper
         x = x.get_qp()
         return torch.cat([logp, t0, x], dim=1)
@@ -53,12 +53,12 @@ class AugmentedCNF(pl.LightningModule):
         self.cfg = cfg
         self.save_hyperparameters()
 
-        # Initialize timespan
-        self.t_span = torch.linspace(0.0, 1.0, self.cfg.training.num_timesteps)
+        # Initialize timespan spanning target at t=1.0 to source at t=0.0
+        self.t_span = torch.linspace(1.0, 0.0, self.cfg.training.num_timesteps)
 
         # Initialize source, target, train
-        self.source = build_augmented_distribution(self.cfg.source, self.device, 1.0)
-        self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
+        self.source = build_augmented_distribution(self.cfg.source, self.device, 0.0)
+        self.target = build_augmented_distribution(self.cfg.target, self.device, 1.0)
         self.source_set = TorchdynAugmentedDataset(self.source, self.cfg.training.num_train)
         self.target_set = TorchdynAugmentedDataset(self.target, self.cfg.training.num_train)
         
@@ -86,29 +86,30 @@ class AugmentedCNF(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def compute_data_loss(self, x0):
-        _, trajectory = self.model(x0, self.t_span)
-        x1 = trajectory[-1]
-        flow_logp = x1[:, 0]
-        x1 = AugmentedData.from_qp(x1[:, 2:], t=1.0)
-        source_logp = self.source.get_log_density(x1)
+    def compute_data_loss(self, x1):
+        _, trajectory = self.model(x1, self.t_span)
+        x0 = trajectory[-1]
+        flow_logp = x0[:, 0]
+        x0 = AugmentedData.from_qp(x0[:, 2:], t=0.0)
+        source_logp = self.source.get_log_density(x0)
+        print(f'Source: {-torch.mean(source_logp)}, flow: {-torch.mean(flow_logp)}')
         return -torch.mean(source_logp - flow_logp)
 
     def data_loss(self, N=10000):
-        x0 = self.target_set.sample(N, t=0.0)
-        return self.compute_data_loss(x0)
+        x1 = self.target_set.sample(N)
+        return self.compute_data_loss(x1)
 
     def reverse_kl(self, num_timesteps = 25, N=10000):
-        x1 = self.source_set.sample(N, t=1.0)
-        x1_data = AugmentedData.from_qp(x1[:,2:], t=1.0)
-        source_logp = self.source.get_log_density(x1_data)
-        t_span = torch.linspace(1.0, 0.0, num_timesteps)
-        _, trajectory = self.model(x1, t_span)
-        x0 = trajectory[-1] # select last point of solution trajectory
-        flow_logp = x0[:,0]
-        x0 = AugmentedData.from_qp(x0[:,2:], 1.0)
+        x0 = self.source_set.sample(N)
+        x0_data = AugmentedData.from_qp(x0[:,2:], t=0.0)
+        source_logp = self.source.get_log_density(x0_data)
+        t_span = torch.linspace(0.0, 1.0, num_timesteps)
+        _, trajectory = self.model(x0, t_span)
+        x1 = trajectory[-1] # select last point of solution trajectory
+        flow_logp = x1[:,0]
+        x1 = AugmentedData.from_qp(x1[:,2:], t=1.0)
         pushforward_logp = source_logp + flow_logp
-        target_logp = self.target.get_log_density(x0)
+        target_logp = self.target.get_log_density(x1)
         return torch.mean(pushforward_logp - target_logp)
 
     def training_step(self, batch, batch_idx):
@@ -148,15 +149,15 @@ class AugmentedCNF(pl.LightningModule):
         plt.show()
 
     def graph_marginals(self, num_marginals=5, N=10000):
-        X_test = self.source_set.sample(N, t=1.0)
-        t_span = torch.linspace(1.0, 0.0, num_marginals)
+        X_test = self.source_set.sample(N)
+        t_span = torch.linspace(0.0, 1.0, num_marginals)
         t_eval, trajectory = self.model(X_test.to(self.device), t_span.to(self.device))
         trajectory = trajectory.detach().cpu().numpy()
         self.graph(trajectory)
 
     def graph_backwards_marginals(self, num_marginals=5, N=10000):
-        X_target = self.target_set.sample(N, t=0.0)
-        t_span = torch.linspace(0.0, 1.0, num_marginals)
+        X_target = self.target_set.sample(N)
+        t_span = torch.linspace(1.0, 0.0, num_marginals)
         t_eval, trajectory = self.model(X_target.to(self.device), t_span.to(self.device))
         trajectory = trajectory.detach().cpu().numpy()
         self.graph(trajectory)

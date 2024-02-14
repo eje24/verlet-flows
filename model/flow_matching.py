@@ -32,8 +32,8 @@ class FlowMatching(pl.LightningModule):
         self.save_hyperparameters()
 
         # Initialize source, target, train
-        self.source = build_augmented_distribution(self.cfg.source, self.device, 1.0)
-        self.target = build_augmented_distribution(self.cfg.target, self.device, 0.0)
+        self.source = build_augmented_distribution(self.cfg.source, self.device, 0.0)
+        self.target = build_augmented_distribution(self.cfg.target, self.device, 1.0)
         self.train_set = FlowMatchingDataset(self.source, self.target, self.cfg.training.num_train)
         self.val_set = FlowMatchingDataset(self.source, self.target, self.cfg.training.num_val)
         
@@ -54,8 +54,8 @@ class FlowMatching(pl.LightningModule):
         # Unpack
         source_data, target_data, time = batch
         # print(source_data.shape, target_data.shape, time.shape)
-        source_data = AugmentedData.from_qp(source_data, 1.0)
-        target_data = AugmentedData.from_qp(target_data, 0.0)
+        source_data = AugmentedData.from_qp(source_data, 0.0)
+        target_data = AugmentedData.from_qp(target_data, 1.0)
         # Reorder to minimize earth mover's distance
         # print(source_data.q.shape, source_data.p.shape, target_data.q.shape, target_data.p.shape)
         source_data, target_data = augmented_emd_reorder(source_data, target_data)
@@ -64,9 +64,8 @@ class FlowMatching(pl.LightningModule):
         # Compute vector field
         dq, dp = self.flow.get_flow(interpolated_data)
         # Compute expected vector field
-        # NOTE: we do source - target because source is at time 1.0 and target is at time 0.0
-        expected_dq = (source_data.q - target_data.q)
-        expected_dp = (source_data.p - target_data.p)
+        expected_dq = (target_data.q - source_data.q)
+        expected_dp = (target_data.p - source_data.p)
         return torch.mean((dq - expected_dq)**2 + (dp - expected_dp)**2)
         
 

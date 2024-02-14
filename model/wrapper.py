@@ -82,7 +82,7 @@ class AugmentedWrapper:
         fix, axs = plt.subplots(1, n_marginals, figsize=(100, 20))
         t_base = torch.ones(bins ** 2, 1, device=self._device)
         p = torch.zeros_like(qxy, device=self._device)
-        for t in reversed(range(n_marginals)):
+        for t in range(n_marginals):
             data = AugmentedData(qxy, p, t / (n_marginals - 1) * t_base)
             dq, _ = self._flow.get_flow(data)
             dq = dq.reshape(bins, bins, 2).detach().cpu().numpy()

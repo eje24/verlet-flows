@@ -39,18 +39,18 @@ class NumericIntegrator(Integrator):
         cnf = self.build_cnf(flow, device=data.device, trace_estimator=trace_estimator, verbose=verbose)
         ode = NeuralODE(cnf, sensitivity='adjoint', solver='rk4', solver_adjoint='dopri5', atol_adjoint=1e-4, rtol_adjoint=1e-4)
         print(f'Numerically integrating with {num_steps} steps')
-        t_span = torch.linspace(1.0, 0.0, num_steps + 1)
+        t_span = None
         # Augment data with time and concatenate logp and time
         data = data.get_qp()
         logp = torch.zeros((data.size()[0], 1), device=data.device)
         if reverse:
             # Target to sample
-            t = torch.zeros((data.size()[0], 1), device=data.device)
-            t_span = torch.linspace(0.0, 1.0, num_steps + 1)
-        else:
-            # Sample to target
             t = torch.ones((data.size()[0], 1), device=data.device)
             t_span = torch.linspace(1.0, 0.0, num_steps + 1)
+        else:
+            # Sample to target
+            t = torch.zeros((data.size()[0], 1), device=data.device)
+            t_span = torch.linspace(0.0, 1.0, num_steps + 1)
         data = torch.cat([logp, t, data], dim=1)
         # Integrate
         _, traj = ode(data, t_span)
@@ -134,9 +134,9 @@ class VerletIntegrator(Integrator):
 
     def integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10, reverse=False) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         if reverse:
-            return self.do_integrate(flow, data, trajectory, num_steps)
-        else:
             return self.do_reverse_integrate(flow, data, trajectory, num_steps)
+        else:
+            return self.do_integrate(flow, data, trajectory, num_steps)
 
     # Check invertibility of integrator
     def assert_consistency(self, flow: VerletFlow, source_data: AugmentedData, num_steps: int = 10):
