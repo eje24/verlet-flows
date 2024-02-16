@@ -1,7 +1,11 @@
 /data
 /outputs
 /workdir
+/scripts
 *__pycache__/
 *.ipynb_checkpoints/
 /lightning_logs/
+/notebooks/*.csv
+/notebooks/*.png
+nohup.out
 ```
