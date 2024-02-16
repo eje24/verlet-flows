@@ -1,0 +1,10 @@
+# General arguments
+run_name: unamed_verlet_cnf_pentamodal
+
+# Defaults (with their own .yaml files)
+defaults:
+  - flow: non_verlet
+  - source: gaussian
+  - target: pentamodal
+  - training: cnf
+

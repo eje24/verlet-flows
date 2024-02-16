@@ -1,0 +1,9 @@
+# General arguments
+run_name: unamed_verlet_cnf_bimodal
+
+# Defaults (with their own .yaml files)
+defaults:
+  - flow: non_verlet
+  - source: gaussian
+  - target: bimodal
+  - training: cnf

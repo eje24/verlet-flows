@@ -1,0 +1,9 @@
+# General arguments
+run_name: verlet_cnf_weird_gaussian
+
+# Defaults (with their own .yaml files)
+defaults:
+  - flow: non_verlet
+  - source: gaussian
+  - target: weird_gaussian
+  - training: cnf
