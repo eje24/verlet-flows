@@ -1,5 +1,6 @@
 # General arguments
 run_name: unnamed_run
+debug: false
 
 # Defaults (with their own .yaml files)
 defaults:

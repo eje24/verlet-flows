@@ -35,6 +35,22 @@ def check_uncommitted_changes():
         print("git command not available. Make sure you are in a Git repository and git is installed.")
         sys.exit(1)
 
+def get_current_commit_info():
+    try:
+        # Get the current commit hash
+        commit_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+        
+        # Get the description (commit message) of the current commit
+        commit_description = subprocess.check_output(['git', 'log', '-1', '--pretty=%B'], text=True).strip()
+
+        return commit_hash, commit_description
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing git command: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        print("Git is not available. Please ensure git is installed and accessible.")
+        sys.exit(1)
+
 def get_model(cfg: DictConfig) -> pl.LightningModule:
     if cfg.training.loss == 'cnf':
         return AugmentedCNF(cfg)
@@ -44,7 +60,8 @@ def get_model(cfg: DictConfig) -> pl.LightningModule:
 @hydra.main(version_base=None, config_path='conf', config_name='config')
 def main(cfg: DictConfig) -> None:
     # Check for uncommitted changes
-    check_uncommitted_changes()
+    if not cfg.debug:
+        check_uncommitted_changes()
 
     # Print config
     print(OmegaConf.to_yaml(cfg))
@@ -53,6 +70,10 @@ def main(cfg: DictConfig) -> None:
     wandb.config = OmegaConf.to_container(
         cfg, resolve=True, throw_on_missing=True
     )
+
+    # Log commit hash and description
+    commit_hash, commit_description = get_current_commit_info()
+    wandb.config.update({'commit_hash': commit_hash, 'commit_description': commit_description})
 
     # Initialize model
     model = get_model(cfg)
