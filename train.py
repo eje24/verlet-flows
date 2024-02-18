@@ -7,6 +7,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import hydra
 import wandb
+from wandb.wandb_run import Run
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.append('../')
@@ -66,15 +67,6 @@ def main(cfg: DictConfig) -> None:
     # Print config
     print(OmegaConf.to_yaml(cfg))
 
-    # Initialize wandb
-    wandb.config = OmegaConf.to_container(
-        cfg, resolve=True, throw_on_missing=True
-    )
-
-    # Log commit hash and description
-    commit_hash, commit_description = get_current_commit_info()
-    wandb.config.update({'commit_hash': commit_hash, 'commit_description': commit_description})
-
     # Initialize model
     model = get_model(cfg)
 
@@ -84,6 +76,12 @@ def main(cfg: DictConfig) -> None:
         name=cfg.run_name,
         save_dir='workdir',
     )
+    wandb_run = wandb_logger.experiment
+
+    # Log commit hash and description
+    if isinstance(wandb_run, Run):
+        commit_hash, commit_description = get_current_commit_info()
+        wandb_run.config.update({'commit_hash': commit_hash, 'commit_description': commit_description})
 
     # Initialize checkpoint callback
     checkpoint_callback = ModelCheckpoint(
