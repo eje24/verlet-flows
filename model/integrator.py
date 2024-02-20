@@ -8,7 +8,7 @@ from model.torchdyn import hutch_trace, CNF as CNFWrapper
 from torchdyn.models import NeuralODE
 
 from datasets.aug_data import AugmentedData
-from model.flow import AugmentedFlow, VerletFlow, TorchdynAugmentedFlowWrapper
+from model.flow import AugmentedFlow, TaylorVerletFlow, VerletFlow, TorchdynAugmentedFlowWrapper
 
 class AugmentedFlowTrajectory:
     def __init__(self):
@@ -63,6 +63,57 @@ class NumericIntegrator(Integrator):
         return trajectory.trajectory[-1], trajectory
 
 
+class TaylorVerletIntegrator(Integrator):
+    def __init__(self):
+        # This parameter indicates whether integrating populates the flow_logp property of the trajectory
+        self.name = 'taylor_verlet'
+
+    def integrate_step(self, flow: TaylorVerletFlow, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
+
+        for layer in flow.layers:
+            data, step_dlogp = layer.integrate_step(data, dt)
+            dlogp = dlogp - step_dlogp
+
+        data = AugmentedData(data.q, data.p, data.t + dt)
+        return data, dlogp
+
+    def reverse_integrate_step(self, flow: TaylorVerletFlow, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
+        data = AugmentedData(data.q, data.p, data.t - dt)
+
+        for layer in reversed(flow.layers):
+            data, step_dlogp = layer.reverse_integrate_step(data, dt)
+            dlogp = dlogp + step_dlogp
+
+        return data, dlogp
+
+    # Starting from a given state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
+    def do_integrate(self, flow: TaylorVerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+        trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
+        dt = 1.0 / num_steps
+        for _ in range(num_steps):
+            data, dlogp = self.integrate_step(flow, data, dt)
+            trajectory.trajectory.append(data)
+            trajectory.flow_logp += dlogp
+        return data, trajectory
+
+    def do_reverse_integrate(self, flow: TaylorVerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+        trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
+        dt = 1.0 / num_steps
+        for _ in range(num_steps):
+            data, dlogp = self.reverse_integrate_step(flow, data, dt)
+            trajectory.trajectory.append(data)
+            trajectory.flow_logp += dlogp
+        return data, trajectory
+
+    def integrate(self, flow: TaylorVerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10, reverse=False) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
+        if reverse:
+            return self.do_integrate(flow, data, trajectory, num_steps)
+        else:
+            return self.do_reverse_integrate(flow, data, trajectory, num_steps)
+
+
 class VerletIntegrator(Integrator):
     def __init__(self):
         # This parameter indicates whether integrating populates the flow_logp property of the trajectory
@@ -113,7 +164,7 @@ class VerletIntegrator(Integrator):
         data = AugmentedData(data.q - dt * q_vp, data.p, data.t)
         return data, dlogp
 
-    # Starting from a ginen state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
+    # Starting from a given state, Verlet-integrate the given flow from t=0 to t=1 using the prescribed number of steps
     def do_integrate(self, flow: VerletFlow, data: AugmentedData, trajectory: AugmentedFlowTrajectory, num_steps: int = 10) -> Tuple[AugmentedData, AugmentedFlowTrajectory]:
         trajectory.flow_logp = torch.zeros((data.batch_size,), device=data.device)
         dt = 1.0 / num_steps
@@ -166,6 +217,8 @@ class VerletIntegrator(Integrator):
 def build_integrator(integrator: str, **kwargs) -> Integrator:
     if integrator == 'verlet':
         return VerletIntegrator()
+    elif integrator == 'taylor_verlet':
+        return TaylorVerletIntegrator()
     elif integrator == 'numeric':
         return NumericIntegrator()
     else:

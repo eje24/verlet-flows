@@ -4,7 +4,7 @@ debug: false
 
 # Defaults (with their own .yaml files)
 defaults:
-  - flow: verlet
+  - flow: taylor_verlet
   - source: gaussian
   - target: weird_gaussian
   - training: cnf

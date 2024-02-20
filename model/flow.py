@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Callable
 import math
+from enum import Enum
 
 import torch
 import torch.nn as nn
@@ -84,6 +85,205 @@ class NonVerletFlow(nn.Module):
         elif integrator == 'numeric':
             return TorchdynAugmentedFlowWrapper(self)
 
+class VerletTermType(Enum):
+    Q = 0
+    P = 1
+
+    def __eq__(self, other):
+        return self.value == other.value
+
+class TaylorVerletFlowTerm(nn.Module, ABC):
+    def __init__(self, term_type: VerletTermType, data_dim: int):
+        super().__init__()
+        self._term_type = term_type
+        self._data_dim = data_dim
+
+    @abstractmethod
+    def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
+        pass
+
+    # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
+    @abstractmethod
+    def integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        pass
+
+    # Returns the next state after a single step of reverse Verlet integration, as well as the log determinant of the Jacobian of the transformation
+    @abstractmethod
+    def reverse_integrate_step(self, data: AugmentedData, dt: float) -> AugmentedData:
+        pass
+
+class DenseOrderZeroTerm(TaylorVerletFlowTerm):
+    def __init__(self, term_type: VerletTermType, data_dim: int, num_hidden: int, num_layers: int):
+        super().__init__(term_type, data_dim)
+        self._flow_net = TimeInjectionNet(data_dim, data_dim, num_hidden, num_layers)
+
+    def get_flow_contribution(self, data: AugmentedData):
+        if self._term_type == VerletTermType.Q:
+            contribution = self._flow_net(data.p, data.t)
+            return contribution, torch.zeros_like(contribution).to(contribution.device)
+        else:
+            contribution = self._flow_net(data.q, data.t)
+            return torch.zeros_like(contribution).to(contribution.device), contribution
+
+    def integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        dq, dp = self.get_flow_contribution(data)
+        new_data = AugmentedData(data.q + dt * dq, data.p + dt * dp, data.t)
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
+        return new_data, dlogp
+
+    def reverse_integrate_step(self, data: AugmentedData, dt: float) -> AugmentedData:
+        dq, dp = self.get_flow_contribution(data)
+        new_data = AugmentedData(data.q - dt * dq, data.p - dt * dp, data.t)
+        dlogp = torch.zeros((data.batch_size,), device=data.device)
+        return new_data, dlogp
+
+class DenseOrderOneTerm(TaylorVerletFlowTerm):
+    def __init__(self, term_type: VerletTermType, data_dim: int, num_hidden: int, num_layers: int):
+        super().__init__(term_type, data_dim)
+        self._flow_net = TimeInjectionNet(data_dim, data_dim ** 2, num_hidden, num_layers)
+
+    def get_dense_matrix(self, data: AugmentedData):
+        if self._term_type == VerletTermType.Q:
+            dense_matrix = self._flow_net(data.p, data.t)
+        elif self._term_type == VerletTermType.P:
+            dense_matrix = self._flow_net(data.q, data.t)
+        else:
+            raise ValueError('Invalid term type')
+        dense_matrix = dense_matrix.view(data.batch_size, self._data_dim, self._data_dim)
+        dense_matrix = torch.clip(dense_matrix, -20, 20)
+        return dense_matrix
+
+    def get_flow_contribution(self, data: AugmentedData):
+        dense_matrix = self.get_dense_matrix(data)
+        if self._term_type == VerletTermType.Q:
+            contribution = torch.bmm(dense_matrix , data.q.unsqueeze(2)).squeeze(2)
+            return contribution, torch.zeros_like(contribution).to(contribution.device)
+        elif self._term_type == VerletTermType.P:
+            contribution = torch.bmm(dense_matrix , data.p.unsqueeze(2)).squeeze(2)
+            return torch.zeros_like(contribution).to(contribution.device), contribution
+        else:
+            raise ValueError('Invalid term type')
+
+    def integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        dense_matrix = self.get_dense_matrix(data)
+        new_data = None
+        dlogp = None
+        if self._term_type == VerletTermType.Q:
+            # Compute new data
+            new_q = torch.bmm(torch.linalg.matrix_exp(dt * dense_matrix), data.q.unsqueeze(2)).squeeze(2)
+            new_data = AugmentedData(new_q, data.p, data.t)
+            # Compute dlogp
+            dlogp = torch.einsum('ijj->i', dt * dense_matrix)
+        elif self._term_type == VerletTermType.P:
+            # Compute new data
+            new_p = torch.bmm(torch.linalg.matrix_exp(dt * dense_matrix), data.p.unsqueeze(2)).squeeze(2)
+            new_data = AugmentedData(data.q, new_p, data.t)
+            # Compute dlogp
+            dlogp = torch.einsum('ijj->i', dt * dense_matrix)
+        else:
+            raise ValueError('Invalid term type')
+        return new_data, dlogp
+
+    def reverse_integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        dense_matrix = self.get_dense_matrix(data)
+        new_data = None
+        dlogp = None
+        if self._term_type == VerletTermType.Q:
+            # Compute new data
+            new_q = torch.bmm(torch.linalg.matrix_exp(-dt * dense_matrix), data.q.unsqueeze(2)).squeeze(2)
+            new_data = AugmentedData(new_q, data.p, data.t)
+            # Compute dlogp
+            dlogp = torch.einsum('ijj->i', dt * dense_matrix)
+        elif self._term_type == VerletTermType.P:
+            # Compute new data
+            new_p = torch.bmm(torch.linalg.matrix_exp(-dt * dense_matrix), data.p.unsqueeze(2)).squeeze(2)
+            new_data = AugmentedData(data.q, new_p, data.t)
+            # Compute dlogp
+            dlogp = torch.einsum('ijj->i', dt * dense_matrix)
+        else:
+            raise ValueError('Invalid term type')
+        return new_data, dlogp
+
+class SparseOrderNTerm(TaylorVerletFlowTerm):
+    def __init__(self, term_type: VerletTermType, term_order: int, data_dim: int, num_hidden: int, num_layers: int):
+        raise NotImplementedError('SparseOrderNTerm not yet implemented')
+
+class TaylorVerletFlow(AugmentedFlow, nn.Module):
+    def __init__(self,
+                 data_dim: int,
+                 num_hidden: int,
+                 num_layers: int,
+                 order: int):
+        super().__init__()
+        self._data_dim = data_dim
+        self._num_hidden = num_hidden
+        self._num_layers = num_layers
+        self._order = order
+
+        self._layers = nn.ModuleDict()
+
+        # Initialize layers 0 and 1
+        self._layers['q0'] = DenseOrderZeroTerm(VerletTermType.Q, data_dim, num_hidden, num_layers)
+        self._layers['p0'] = DenseOrderZeroTerm(VerletTermType.P, data_dim, num_hidden, num_layers)
+        self._layers['q1'] = DenseOrderOneTerm(VerletTermType.Q, data_dim, num_hidden, num_layers)
+        self._layers['p1'] = DenseOrderOneTerm(VerletTermType.P, data_dim, num_hidden, num_layers)
+
+        # Initialize layers 2, ..., self.order
+        for layer_idx in range(2, self._order + 1):
+            self._layers[f'q{layer_idx}'] = SparseOrderNTerm(VerletTermType.Q, layer_idx, data_dim, num_hidden, num_layers)
+            self._layers[f'p{layer_idx}'] = SparseOrderNTerm(VerletTermType.P, layer_idx, data_dim, num_hidden, num_layers)
+
+    @property
+    def order(self):
+        return self._order
+
+    @property
+    def layers(self):
+        layers = []
+        for layer_idx in range(self._order + 1):
+            layers.append(self._layers[f'q{layer_idx}'])
+            layers.append(self._layers[f'p{layer_idx}'])
+        return layers
+
+    def get_flow(self, data: AugmentedData):
+        dq = torch.zeros_like(data.q).to(data.q.device)
+        dp = torch.zeros_like(data.p).to(data.p.device)
+
+        for layer in self.layers:
+            ddq, ddp = layer.get_flow_contribution(data)
+            dq = dq + ddq
+            dp = dp + ddp
+
+        return dq, dp
+
+    def forward(self, t: float, qp: torch.Tensor):
+        data = AugmentedData.from_qp(qp, t)
+        dq, dp = self.get_flow(data)
+        return torch.cat((dq, dp), dim=1)
+
+    def wrap_for_integration(self, integrator: str):
+        if integrator == 'verlet':
+            return self
+        elif integrator == 'taylor_verlet':
+            return self
+        elif integrator == 'numeric':
+            return TorchdynAugmentedFlowWrapper(self)
+
+    # The following methods allow order <= 1 TaylorVerlet flows to be integrated using the Verlet integrator
+    def q_vp(self, data: AugmentedData):
+        return self._layers['q0'].get_flow_contribution(data)[0]
+
+    def q_nvp(self, data: AugmentedData):
+        return self._layers['q1'].get_dense_matrix(data)
+
+    def p_vp(self, data: AugmentedData):
+        return self._layers['p0'].get_flow_contribution(data)[1]
+
+    def p_nvp(self, data: AugmentedData):
+        return self._layers['p1'].get_dense_matrix(data)
+
+
+
 # Flow architecture based on existing literature
 # See Appendix E.2 in https://arxiv.org/abs/2302.00482
 class VerletFlow(AugmentedFlow, nn.Module):
@@ -148,6 +348,8 @@ class VerletFlow(AugmentedFlow, nn.Module):
     def wrap_for_integration(self, integrator: str):
         if integrator == 'verlet':
             return self
+        elif integrator == 'taylor_verlet':
+            raise ValueError('VerletFlow cannot be used with Taylor-Verlet integrator')
         elif integrator == 'numeric':
             return TorchdynAugmentedFlowWrapper(self)
 
@@ -173,6 +375,11 @@ def build_augmented_flow(flow_cfg: DictConfig, target: Distribution) -> Augmente
                              num_nvp_hidden=flow_cfg.num_nvp_hidden,
                              num_vp_layers=flow_cfg.num_vp_layers,
                              num_nvp_layers=flow_cfg.num_nvp_layers)
+    elif flow_cfg.flow_type == 'taylor_verlet':
+        flow = TaylorVerletFlow(data_dim=flow_cfg.dim,
+                             num_hidden=flow_cfg.num_hidden,
+                             num_layers=flow_cfg.num_layers,
+                             order=flow_cfg.order)
     elif flow_cfg.flow_type == 'non_verlet':
         log_grad_fn = target.log_grad_fn if flow_cfg.use_grad else None
         flow = NonVerletFlow(data_dim=flow_cfg.dim, 

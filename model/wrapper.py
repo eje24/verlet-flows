@@ -147,8 +147,8 @@ class AugmentedWrapper:
         self.graph_marginals(trajectory, marginal_idxs)
 
     # Experiments
-    def reverse_kl(self, N=10000) -> float:
-        data, trajectory = self.sample(N)
+    def reverse_kl(self, N=10000, integrator='numeric') -> float:
+        data, trajectory = self.sample(N, integrator=integrator)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         target_logp = self._target.get_log_density(data)
         return torch.mean(pushforward_logp - target_logp)

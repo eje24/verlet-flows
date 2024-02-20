@@ -1,0 +1,5 @@
+flow_type: taylor_verlet
+dim: 2
+num_layers: 3
+num_hidden: 64
+order: 1
