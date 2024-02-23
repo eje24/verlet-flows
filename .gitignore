@@ -7,5 +7,6 @@
 /lightning_logs/
 /notebooks/*.csv
 /notebooks/*.png
+/notebooks/experiments.ipynb
 nohup.out
 ```

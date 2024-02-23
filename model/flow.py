@@ -102,11 +102,13 @@ class TaylorVerletFlowTerm(nn.Module, ABC):
     def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
         pass
 
+    # Implementation of pseudo time evolution operator
     # Returns the next state after a single step of Verlet integration, as well as the log determinant of the Jacobian of the transformation
     @abstractmethod
     def integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
         pass
 
+    # Implementation of inverse of pseudo time evolution operator
     # Returns the next state after a single step of reverse Verlet integration, as well as the log determinant of the Jacobian of the transformation
     @abstractmethod
     def reverse_integrate_step(self, data: AugmentedData, dt: float) -> AugmentedData:
@@ -117,7 +119,7 @@ class DenseOrderZeroTerm(TaylorVerletFlowTerm):
         super().__init__(term_type, data_dim)
         self._flow_net = TimeInjectionNet(data_dim, data_dim, num_hidden, num_layers)
 
-    def get_flow_contribution(self, data: AugmentedData):
+    def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._term_type == VerletTermType.Q:
             contribution = self._flow_net(data.p, data.t)
             return contribution, torch.zeros_like(contribution).to(contribution.device)
@@ -153,7 +155,7 @@ class DenseOrderOneTerm(TaylorVerletFlowTerm):
         dense_matrix = torch.clip(dense_matrix, -20, 20)
         return dense_matrix
 
-    def get_flow_contribution(self, data: AugmentedData):
+    def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
         dense_matrix = self.get_dense_matrix(data)
         if self._term_type == VerletTermType.Q:
             contribution = torch.bmm(dense_matrix , data.q.unsqueeze(2)).squeeze(2)
@@ -204,9 +206,106 @@ class DenseOrderOneTerm(TaylorVerletFlowTerm):
             raise ValueError('Invalid term type')
         return new_data, dlogp
 
+MAX_CONTRIBUTION_MAGNITUDE = 25.0
+
 class SparseOrderNTerm(TaylorVerletFlowTerm):
     def __init__(self, term_type: VerletTermType, term_order: int, data_dim: int, num_hidden: int, num_layers: int):
-        raise NotImplementedError('SparseOrderNTerm not yet implemented')
+        super().__init__(term_type, data_dim)
+        self._term_order = term_order
+        self._net = TimeInjectionNet(data_dim, data_dim, num_hidden, num_layers)
+
+    # Move clipping into flow net to enforce consistence between integration and get_flow_contribution
+    def flow_net(self, x: torch.Tensor, y: torch.Tensor, t: torch.Tensor):
+        raw_net_output = self._net(x, t) / math.factorial(self._term_order)
+
+        # Clip raw_net_output so that raw_net_output * q^ is bounded
+        power = torch.pow(y, self._term_order)
+        upper_bound = torch.abs(MAX_CONTRIBUTION_MAGNITUDE / power)
+        lower_bound = - torch.abs(MAX_CONTRIBUTION_MAGNITUDE / power)
+
+        raw_net_output = torch.clip(raw_net_output, lower_bound, upper_bound)
+        return raw_net_output
+
+    def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self._term_type == VerletTermType.Q:
+            contribution = self.flow_net(data.p, data.q, data.t) * torch.pow(data.q, self._term_order)
+            # print("Fraction of entries > 10: ", torch.sum(torch.abs(contribution) > 10) / data.batch_size)
+            # print("Fraction of entries > 100: ", torch.sum(torch.abs(contribution) > 100) / data.batch_size)
+            # print("Fraction of entries > 1000: ", torch.sum(torch.abs(contribution) > 1000) / data.batch_size)
+            contribution = torch.clip(contribution, -25, 25)
+            # assert torch.isfinite(c1).all()
+            # assert torch.isfinite(c2).all()
+            # contribution = self.flow_net(data.p, data.t) * torch.pow(data.q, self._term_order)
+            # assert torch.isfinite(contribution).all()
+            # assert torch.isnan(contribution).sum() == 0
+            return contribution, torch.zeros_like(contribution).to(contribution.device)
+        elif self._term_type == VerletTermType.P:
+            contribution = self.flow_net(data.q, data.p, data.t) * torch.pow(data.p, self._term_order)
+            contribution = torch.clip(contribution, -25, 25)
+            # assert torch.isfinite(contribution).all()
+            # assert torch.isnan(contribution).sum() == 0
+            return torch.zeros_like(contribution).to(contribution.device), contribution
+        else:
+            raise ValueError('Invalid term type')
+
+    def integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        k = self._term_order
+        new_data = None
+        dlogp = None
+        if self._term_type == VerletTermType.Q:
+            s = self.flow_net(data.p, data.q, data.t)
+            # Compute new data
+            new_q = torch.pow(data.q, 1-k) + dt * (1 - k) * s
+            new_q = torch.pow(new_q, 1/(1-k))
+            new_data = AugmentedData(new_q, data.p, data.t)
+            # Compute dlogp
+            dlogp = k / (1-k) * torch.log(torch.abs(torch.pow(data.q, 1-k) + dt * (1 - k) * s)) - k * torch.log(torch.abs(data.q))
+            dlogp = torch.sum(dlogp, dim=1)
+        elif self._term_type == VerletTermType.P:
+            s = self.flow_net(data.q, data.p, data.t)
+            # Compute new data
+            new_p = torch.pow(data.p, 1-k) + dt * (1 - k) * s
+            new_p = torch.pow(new_p, 1/(1-k))
+            new_data = AugmentedData(data.q, new_p, data.t)
+            # Compute dlogp
+            dlogp = k / (1-k) * torch.log(torch.abs(torch.pow(data.p, 1-k) + dt * (1 - k) * s)) - k * torch.log(torch.abs(data.p))
+            dlogp = torch.sum(dlogp, dim=1)
+        else:
+            raise ValueError('Invalid term type')
+        return new_data, dlogp
+
+    def reverse_integrate_step(self, data: AugmentedData, dt: float) -> Tuple[AugmentedData, torch.Tensor]:
+        k = self._term_order
+        new_data = None
+        dlogp = None
+        if self._term_type == VerletTermType.Q:
+            s = self.flow_net(data.p, data.q, data.t)
+            # Compute new data
+            new_q = torch.pow(data.q, 1-k) - dt * (1 - k) * s
+            new_q = torch.pow(new_q, 1/(1-k))
+            new_data = AugmentedData(new_q, data.p, data.t)
+            # Compute dlogp
+            dlogp = k / (1-k) * torch.log(torch.abs(torch.pow(new_data.q, 1-k) + dt * (1 - k) * s)) - k * torch.log(torch.abs(new_data.q))
+            dlogp = torch.sum(dlogp, dim=1)
+            # Assert that no terms are infinite or NaN
+            assert torch.isfinite(dlogp).all()
+            assert torch.isnan(dlogp).sum() == 0
+            assert torch.isfinite(new_data.q).all()
+        elif self._term_type == VerletTermType.P:
+            s = self.flow_net(data.q, data.p, data.t)
+            # Compute new data
+            new_p = torch.pow(data.p, 1-k) - dt * (1 - k) * s
+            new_p = torch.pow(new_p, 1/(1-k))
+            new_data = AugmentedData(data.q, new_p, data.t)
+            # Compute dlogp
+            dlogp = k / (1-k) * torch.log(torch.abs(torch.pow(new_data.p, 1-k) + dt * (1 - k) * s)) - k * torch.log(torch.abs(new_data.p))
+            dlogp = torch.sum(dlogp, dim=1)
+            assert torch.isfinite(dlogp).all()
+            assert torch.isnan(dlogp).sum() == 0
+            assert torch.isfinite(new_data.p).all()
+        else:
+            raise ValueError('Invalid term type')
+        return new_data, dlogp
 
 class TaylorVerletFlow(AugmentedFlow, nn.Module):
     def __init__(self,

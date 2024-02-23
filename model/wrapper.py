@@ -14,6 +14,7 @@ import numpy as np
 
 from model.integrator import AugmentedFlowTrajectory, build_integrator
 from model.flow import AugmentedFlow
+from model.utils import BoundingBox
 from datasets.dist import Sampleable, Density, Distribution, GMM, Gaussian, Funnel
 from datasets.aug_data import AugmentedData
 
@@ -91,7 +92,7 @@ class AugmentedWrapper:
             if mode == 'streamplot':
                 axs[t].streamplot(QX, QY, -dq[:,:,0], -dq[:,:,1])
             elif mode == 'quiver':
-                axs[t].quiver(QX, QY, -dq[:,:,0], -dq[:,:,1], scale=30.0)
+                axs[t].quiver(QX, QY, -dq[:,:,0], -dq[:,:,1], scale=100.0)
             axs[t].set_aspect('equal', 'box')
             axs[t].set_title('t = ' + str(t / n_marginals))
             axs[t].set_xlim(-xlim, xlim)
@@ -117,7 +118,7 @@ class AugmentedWrapper:
         marginal_idxs.append(n_integrator_steps)
         return marginal_idxs
 
-    def graph_marginals(self, trajectory: AugmentedFlowTrajectory, marginal_idxs: list[int]):
+    def graph_marginals(self, trajectory: AugmentedFlowTrajectory, marginal_idxs: list[int], xlim: int = Optional[None], ylim: Optional[int] = None):
         n_marginals = len(marginal_idxs)
         n_integrator_steps = len(trajectory.trajectory) - 1
         # Plot marginals
@@ -125,33 +126,42 @@ class AugmentedWrapper:
         for i in range(n_marginals):
             idx = marginal_idxs[i]
             samples = trajectory.trajectory[idx].q.detach().cpu().numpy()
-            axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
+            if xlim is not None and ylim is not None:
+                axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True, range=[[-xlim, xlim], [-ylim, ylim]])
+            else:
+                axs[i].hist2d(samples[:,0], samples[:,1], bins=100, density=True)
             axs[i].set_aspect('equal', 'box')
-            axs[i].set_title('t = ' + str(idx / n_integrator_steps))
-            # axs[i].set_xlim(-xlim, xlim)
-            # axs[i].set_ylim(-ylim, ylim)
+            axs[i].set_title('t = ' + str(idx / n_integrator_steps)) # + ', ' + str(filtered_sample_size) + '/' + str(original_sample_size))
         plt.subplots_adjust(wspace=1.0)
         plt.tight_layout()
         plt.show()
 
     @torch.no_grad()
-    def graph_forward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric'):
+    def graph_forward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric', xlim: int = None, ylim: int = None):
         data, trajectory = self.sample(n_samples, n_integrator_steps, integrator)
         marginal_idxs = self.get_marginal_idxs(n_marginals, n_integrator_steps)
-        self.graph_marginals(trajectory, marginal_idxs)
+        self.graph_marginals(trajectory, marginal_idxs, xlim=xlim, ylim=ylim)
 
     @torch.no_grad()
-    def graph_backward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric'):
+    def graph_backward_marginals(self, n_samples, n_marginals, n_integrator_steps = 60, integrator='numeric', xlim: int = None, ylim: int = None):
         data, trajectory = self.reverse_sample(n_samples, n_integrator_steps, integrator)
         marginal_idxs = self.get_marginal_idxs(n_marginals, n_integrator_steps)
-        self.graph_marginals(trajectory, marginal_idxs)
+        self.graph_marginals(trajectory, marginal_idxs, xlim=xlim, ylim=ylim)
 
     # Experiments
-    def reverse_kl(self, N=10000, integrator='numeric') -> float:
+    def reverse_kl(self, N=10000, integrator='numeric', filter=False, filter_bounds: BoundingBox=None) -> float:
         data, trajectory = self.sample(N, integrator=integrator)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
         target_logp = self._target.get_log_density(data)
-        return torch.mean(pushforward_logp - target_logp)
+        diff_logp = pushforward_logp - target_logp
+        if filter:
+            # Keep only indxs where data is within bounds [0, xlim] x [0, ylim]
+            indxs = (data.q[:,0] >= filter_bounds.xmin) & \
+                    (data.q[:,0] < filter_bounds.xmax) & \
+                    (data.q[:,1] >= filter_bounds.ymin) & \
+                    (data.q[:,1] < filter_bounds.ymax)
+            diff_logp = diff_logp[indxs]
+        return torch.mean(diff_logp)
 
     @torch.no_grad()
     def estimate_z(self, n_sample=10000, n_steps=60, integrator='numeric', trace_estimator:str = 'autograd_trace', n_trial: int = 10) -> float:
