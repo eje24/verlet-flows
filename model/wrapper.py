@@ -149,6 +149,7 @@ class AugmentedWrapper:
         self.graph_marginals(trajectory, marginal_idxs, xlim=xlim, ylim=ylim)
 
     # Experiments
+    @torch.no_grad()
     def reverse_kl(self, N=10000, integrator='numeric', filter=False, filter_bounds: BoundingBox=None) -> float:
         data, trajectory = self.sample(N, integrator=integrator)
         pushforward_logp = trajectory.source_logp + trajectory.flow_logp
