@@ -229,21 +229,9 @@ class SparseOrderNTerm(TaylorVerletFlowTerm):
     def get_flow_contribution(self, data: AugmentedData) -> Tuple[torch.Tensor, torch.Tensor]:
         if self._term_type == VerletTermType.Q:
             contribution = self.flow_net(data.p, data.q, data.t) * torch.pow(data.q, self._term_order)
-            # print("Fraction of entries > 10: ", torch.sum(torch.abs(contribution) > 10) / data.batch_size)
-            # print("Fraction of entries > 100: ", torch.sum(torch.abs(contribution) > 100) / data.batch_size)
-            # print("Fraction of entries > 1000: ", torch.sum(torch.abs(contribution) > 1000) / data.batch_size)
-            contribution = torch.clip(contribution, -25, 25)
-            # assert torch.isfinite(c1).all()
-            # assert torch.isfinite(c2).all()
-            # contribution = self.flow_net(data.p, data.t) * torch.pow(data.q, self._term_order)
-            # assert torch.isfinite(contribution).all()
-            # assert torch.isnan(contribution).sum() == 0
             return contribution, torch.zeros_like(contribution).to(contribution.device)
         elif self._term_type == VerletTermType.P:
             contribution = self.flow_net(data.q, data.p, data.t) * torch.pow(data.p, self._term_order)
-            contribution = torch.clip(contribution, -25, 25)
-            # assert torch.isfinite(contribution).all()
-            # assert torch.isnan(contribution).sum() == 0
             return torch.zeros_like(contribution).to(contribution.device), contribution
         else:
             raise ValueError('Invalid term type')
