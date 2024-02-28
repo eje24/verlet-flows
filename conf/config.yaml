@@ -6,6 +6,6 @@ debug: false
 defaults:
   - flow: taylor_verlet
   - source: gaussian
-  - target: weird_gaussian
-  - training: cnf
+  - target: trimodal
+  - training: flow_matching
   

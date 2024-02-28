@@ -45,6 +45,7 @@ class FlowMatching(pl.LightningModule):
         self.source.to(self.device)
         self.target.to(self.device)
         self.train_losses = []
+        self.val_losses = []
 
         # Initialize source, target, train
         self.train_loader = data.DataLoader(self.train_set, batch_size=self.cfg.training.batch_size, shuffle=True)
@@ -84,8 +85,15 @@ class FlowMatching(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss = self.compute_flow_matching_loss(batch)
+        self.val_losses.append(loss)
         self.log('val_loss', loss)
         return {'val_loss': loss}
+
+    def on_validation_epoch_end(self):
+        # Log validation loss
+        avg_loss = torch.stack(self.val_losses).mean()
+        self.val_losses = []
+        print(f"Device {self.device} | Epoch {self.current_epoch} | Validation Loss: {avg_loss}")
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.flow.parameters(), lr=0.01)
