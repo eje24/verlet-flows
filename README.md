@@ -1,4 +1,6 @@
-# Verlet Flows: Exact Likelihood Integrators for Flow-Based Generative Models
+# Verlet Flows
+Implementation of [Verlet Flows: Exact Likelihood Integrators for Flow-Based Generative Models](https://arxiv.org/abs/2405.02805) by Ezra Erives, Bowen Jing, and Tommi Jaakkola.
+
 Train with
 ```
 python train.py run_name=RUN_NAME
